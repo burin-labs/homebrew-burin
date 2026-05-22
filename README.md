@@ -1,5 +1,10 @@
 # Homebrew tap for Burin
 
+This tap is prepared for the public launch, but the stable install channel is
+still gated until Burin Code distribution is explicitly enabled.
+
+Once launch is enabled:
+
 ```sh
 brew tap burin-labs/burin
 brew install burin
