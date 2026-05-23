@@ -103,7 +103,12 @@ jobs:
             echo "regen-drift: SKIPPED (no accessible releases)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          RELEASE_TAG="$(printf '%s' "${RELEASES_JSON}" | jq -r '[.[] | select(.draft == false and .prerelease == false)] | .[0].tag_name // ""')"
+          # `gh api ... || true` above swallows the exit code but leaves an
+          # error-shaped JSON object (e.g. `{"message":"Not Found",...}`) in
+          # RELEASES_JSON when the default GITHUB_TOKEN lacks cross-repo
+          # access to a private burin-code. Guard on `type == "array"` so jq
+          # doesn't blow up trying to `select(.draft)` on a string value.
+          RELEASE_TAG="$(printf '%s' "${RELEASES_JSON}" | jq -r 'if type == "array" then [.[] | select(.draft == false and .prerelease == false)] | .[0].tag_name // "" else "" end' 2>/dev/null || true)"
           if [ -z "${RELEASE_TAG}" ]; then
             echo "No published release.json yet; skipping regen-drift check."
             echo "regen-drift: SKIPPED (no published release)" >> "$GITHUB_STEP_SUMMARY"
