@@ -99,6 +99,13 @@ Install smoke runs when the referenced release assets are publicly reachable.
 `
 }
 
+// Hard allowlist for artifact URLs. The tap install flow ships whatever URL
+// the release manifest names; without an allowlist a malicious or compromised
+// release.json could redirect Formula/Cask installs to an attacker-controlled
+// host. Homebrew enforces this on the Cask via `verified:`, but the Formula
+// has no equivalent -- so we gate both at generator time.
+const ARTIFACT_URL_PREFIX = "https://github.com/burin-labs/burin-code/"
+
 function requireArtifact(value, name) {
   if (typeof value !== "object" || value === null) {
     throw new Error(`release manifest is missing artifacts.${name}`)
@@ -107,8 +114,18 @@ function requireArtifact(value, name) {
     path: requireString(value.path, `${name}.path`),
     sha256: requireSha256(value.sha256, `${name}.sha256`),
     sizeBytes: requireNumber(value.sizeBytes, `${name}.sizeBytes`),
-    url: requireString(value.url, `${name}.url`),
+    url: requireArtifactUrl(value.url, `${name}.url`),
   }
+}
+
+function requireArtifactUrl(value, name) {
+  const url = requireString(value, name)
+  if (!url.startsWith(ARTIFACT_URL_PREFIX)) {
+    throw new Error(
+      `release manifest field ${name} must start with ${ARTIFACT_URL_PREFIX} (got ${url})`,
+    )
+  }
+  return url
 }
 
 function requireString(value, name) {

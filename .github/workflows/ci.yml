@@ -77,16 +77,71 @@ jobs:
             echo "Skipping cask install smoke because ${URL} is not publicly reachable yet."
           fi
 
+  regen-drift:
+    name: Regen drift check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 22
+      - name: Fetch published release.json and regenerate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # NB: GitHub Actions wraps this script with `bash -e {0}`, so an
+          # implicit `set -e` is already on. We deliberately use `|| true`
+          # around the cross-repo `gh api` calls -- burin-code may be
+          # private to the default GITHUB_TOKEN (404 -> nonzero exit) and
+          # we want to skip cleanly in that case rather than fail the gate.
+          set -uo pipefail
+          RELEASES_JSON="$(gh api repos/burin-labs/burin-code/releases 2>/dev/null || true)"
+          if [ -z "${RELEASES_JSON}" ]; then
+            echo "Could not list burin-code releases (token may lack cross-repo access, or no releases yet)."
+            echo "regen-drift: SKIPPED (no accessible releases)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # `gh api ... || true` above swallows the exit code but leaves an
+          # error-shaped JSON object (e.g. `{"message":"Not Found",...}`) in
+          # RELEASES_JSON when the default GITHUB_TOKEN lacks cross-repo
+          # access to a private burin-code. Guard on `type == "array"` so jq
+          # doesn't blow up trying to `select(.draft)` on a string value.
+          RELEASE_TAG="$(printf '%s' "${RELEASES_JSON}" | jq -r 'if type == "array" then [.[] | select(.draft == false and .prerelease == false)] | .[0].tag_name // "" else "" end' 2>/dev/null || true)"
+          if [ -z "${RELEASE_TAG}" ]; then
+            echo "No published release.json yet; skipping regen-drift check."
+            echo "regen-drift: SKIPPED (no published release)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          MANIFEST_URL="$(gh api "repos/burin-labs/burin-code/releases/tags/${RELEASE_TAG}" --jq '.assets[] | select(.name == "release.json") | .url' 2>/dev/null || true)"
+          if [ -z "${MANIFEST_URL}" ]; then
+            echo "Release ${RELEASE_TAG} has no release.json asset; skipping."
+            echo "regen-drift: SKIPPED (no release.json asset on ${RELEASE_TAG})" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          curl -fsSL -H "Accept: application/octet-stream" -H "Authorization: Bearer ${GH_TOKEN}" "${MANIFEST_URL}" -o /tmp/release.json
+          node script/update-from-release.mjs --release-manifest /tmp/release.json
+          if ! git diff --exit-code -- Formula Casks README.md; then
+            echo "Regenerated Formula/Cask/README differ from committed copy for ${RELEASE_TAG}." >&2
+            echo "Re-run \`node script/update-from-release.mjs --release-manifest release.json\` against the latest release and commit the result." >&2
+            echo "regen-drift: FAILED -- committed tap does not match release ${RELEASE_TAG}" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "regen-drift: OK -- committed tap matches release ${RELEASE_TAG}" >> "$GITHUB_STEP_SUMMARY"
+
   ci-status:
     name: CI status
     runs-on: ubuntu-latest
-    needs: [tap-checks, cask-checks]
+    needs: [tap-checks, cask-checks, regen-drift]
     if: always()
     steps:
       - name: Check aggregate result
         env:
           TAP_RESULT: ${{ needs.tap-checks.result }}
           CASK_RESULT: ${{ needs.cask-checks.result }}
+          REGEN_RESULT: ${{ needs.regen-drift.result }}
         run: |
           test "${TAP_RESULT}" = "success"
           test "${CASK_RESULT}" = "success"
+          test "${REGEN_RESULT}" = "success"
