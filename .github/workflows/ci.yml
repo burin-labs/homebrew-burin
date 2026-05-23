@@ -91,16 +91,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # NB: GitHub Actions wraps this script with `bash -e {0}`, so an
+          # implicit `set -e` is already on. We deliberately use `|| true`
+          # around the cross-repo `gh api` calls -- burin-code may be
+          # private to the default GITHUB_TOKEN (404 -> nonzero exit) and
+          # we want to skip cleanly in that case rather than fail the gate.
           set -uo pipefail
-          # Pull the most recent non-draft release.json from burin-labs/burin-code.
-          # If none is published yet (pre-user, all releases draft) we skip
-          # with a noisy log so this gate doesn't block PRs before the first
-          # release. burin-code may also be private to the default GITHUB_TOKEN
-          # (cross-repo access is not granted automatically); that surfaces as
-          # a 404 from `gh api` which we treat identically to "no release yet".
-          RELEASES_JSON="$(gh api repos/burin-labs/burin-code/releases 2>/dev/null)"
-          gh_status=$?
-          if [ "${gh_status}" -ne 0 ] || [ -z "${RELEASES_JSON}" ]; then
+          RELEASES_JSON="$(gh api repos/burin-labs/burin-code/releases 2>/dev/null || true)"
+          if [ -z "${RELEASES_JSON}" ]; then
             echo "Could not list burin-code releases (token may lack cross-repo access, or no releases yet)."
             echo "regen-drift: SKIPPED (no accessible releases)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
@@ -111,7 +109,6 @@ jobs:
             echo "regen-drift: SKIPPED (no published release)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          set -e
           MANIFEST_URL="$(gh api "repos/burin-labs/burin-code/releases/tags/${RELEASE_TAG}" --jq '.assets[] | select(.name == "release.json") | .url' 2>/dev/null || true)"
           if [ -z "${MANIFEST_URL}" ]; then
             echo "Release ${RELEASE_TAG} has no release.json asset; skipping."
