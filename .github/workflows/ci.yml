@@ -91,17 +91,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           # Pull the most recent non-draft release.json from burin-labs/burin-code.
-          # If none is published yet (pre-user, all releases draft) we skip with
-          # a noisy log so this gate doesn't block PRs before the first release.
-          RELEASE_TAG="$(gh api repos/burin-labs/burin-code/releases --jq '[.[] | select(.draft == false and .prerelease == false)] | .[0].tag_name // ""')"
+          # If none is published yet (pre-user, all releases draft) we skip
+          # with a noisy log so this gate doesn't block PRs before the first
+          # release. burin-code may also be private to the default GITHUB_TOKEN
+          # (cross-repo access is not granted automatically); that surfaces as
+          # a 404 from `gh api` which we treat identically to "no release yet".
+          RELEASES_JSON="$(gh api repos/burin-labs/burin-code/releases 2>/dev/null)"
+          gh_status=$?
+          if [ "${gh_status}" -ne 0 ] || [ -z "${RELEASES_JSON}" ]; then
+            echo "Could not list burin-code releases (token may lack cross-repo access, or no releases yet)."
+            echo "regen-drift: SKIPPED (no accessible releases)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          RELEASE_TAG="$(printf '%s' "${RELEASES_JSON}" | jq -r '[.[] | select(.draft == false and .prerelease == false)] | .[0].tag_name // ""')"
           if [ -z "${RELEASE_TAG}" ]; then
             echo "No published release.json yet; skipping regen-drift check."
             echo "regen-drift: SKIPPED (no published release)" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          MANIFEST_URL="$(gh api "repos/burin-labs/burin-code/releases/tags/${RELEASE_TAG}" --jq '.assets[] | select(.name == "release.json") | .url')"
+          set -e
+          MANIFEST_URL="$(gh api "repos/burin-labs/burin-code/releases/tags/${RELEASE_TAG}" --jq '.assets[] | select(.name == "release.json") | .url' 2>/dev/null || true)"
           if [ -z "${MANIFEST_URL}" ]; then
             echo "Release ${RELEASE_TAG} has no release.json asset; skipping."
             echo "regen-drift: SKIPPED (no release.json asset on ${RELEASE_TAG})" >> "$GITHUB_STEP_SUMMARY"
