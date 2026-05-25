@@ -50,6 +50,11 @@ try {
   assert.match(readme, /`burin`: 1\.2\.4/)
   assert.match(readme, /`burin-code`: 1\.2\.3/)
 
+  assert.match(
+    renderCaskFromMinimumSystemVersion("26.0"),
+    /depends_on macos: :tahoe/,
+  )
+
   // Allowlist enforcement: a manifest pointing at a non-burin-labs URL must
   // be rejected before any Formula/Cask is written.
   const maliciousManifestPath = join(root, "release-malicious.json")
@@ -114,4 +119,33 @@ try {
 } finally {
   process.chdir(originalCwd)
   rmSync(root, { recursive: true, force: true })
+}
+
+function renderCaskFromMinimumSystemVersion(minimumSystemVersion) {
+  const manifestPath = join(root, `release-macos-${minimumSystemVersion}.json`)
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify({
+      schemaVersion: 2,
+      version: "1.2.3",
+      cliVersion: "1.2.4",
+      minimumSystemVersion,
+      artifacts: {
+        "macos-arm64-dmg": {
+          path: "Burin.Code.dmg",
+          sha256: "a".repeat(64),
+          sizeBytes: 10,
+          url: "https://github.com/burin-labs/burin-code/releases/download/v1.2.3/Burin.Code.dmg",
+        },
+        "cli-npm-tarball": {
+          path: "burin-cli-1.2.4.tgz",
+          sha256: "b".repeat(64),
+          sizeBytes: 20,
+          url: "https://github.com/burin-labs/burin-code/releases/download/v1.2.3/burin-cli-1.2.4.tgz",
+        },
+      },
+    })}\n`,
+  )
+  updateFromReleaseManifest(manifestPath)
+  return readFileSync("Casks/burin-code.rb", "utf-8")
 }
