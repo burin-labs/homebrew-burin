@@ -152,6 +152,9 @@ function requireSha256(value, name) {
 
 function macosSymbol(version) {
   const major = Number.parseInt(version.split(".")[0] ?? "", 10)
+  if (major >= 26) {
+    return "tahoe"
+  }
   if (major >= 15) {
     return "sequoia"
   }
