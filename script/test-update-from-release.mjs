@@ -83,7 +83,7 @@ try {
   )
   assert.throws(
     () => updateFromReleaseManifest(maliciousManifestPath),
-    /must start with https:\/\/github\.com\/burin-labs\/burin-code\//,
+    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-code\/releases\/download\//,
   )
 
   const maliciousCliManifestPath = join(root, "release-malicious-cli.json")
@@ -112,7 +112,36 @@ try {
   )
   assert.throws(
     () => updateFromReleaseManifest(maliciousCliManifestPath),
-    /must start with https:\/\/github\.com\/burin-labs\/burin-code\//,
+    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-code\/releases\/download\//,
+  )
+
+  const nonReleaseGithubPathManifest = join(root, "release-non-release-path.json")
+  writeFileSync(
+    nonReleaseGithubPathManifest,
+    `${JSON.stringify({
+      schemaVersion: 2,
+      version: "1.2.3",
+      cliVersion: "1.2.4",
+      minimumSystemVersion: "14.0",
+      artifacts: {
+        "macos-arm64-dmg": {
+          path: "Burin.Code.dmg",
+          sha256: "a".repeat(64),
+          sizeBytes: 10,
+          url: "https://github.com/burin-labs/burin-code/archive/refs/tags/v1.2.3.tar.gz",
+        },
+        "cli-npm-tarball": {
+          path: "burin-cli-1.2.4.tgz",
+          sha256: "b".repeat(64),
+          sizeBytes: 20,
+          url: "https://github.com/burin-labs/burin-code/releases/download/v1.2.3/burin-cli-1.2.4.tgz",
+        },
+      },
+    })}\n`,
+  )
+  assert.throws(
+    () => updateFromReleaseManifest(nonReleaseGithubPathManifest),
+    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-code\/releases\/download\//,
   )
 
   console.log("test-update-from-release: OK")

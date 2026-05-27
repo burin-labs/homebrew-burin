@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
-import { pathToFileURL } from "node:url"
+import { pathToFileURL, URL } from "node:url"
 
 export function updateFromReleaseManifest(path) {
   const manifest = JSON.parse(readFileSync(path, "utf-8"))
@@ -104,7 +104,8 @@ Install smoke runs when the referenced release assets are publicly reachable.
 // release.json could redirect Formula/Cask installs to an attacker-controlled
 // host. Homebrew enforces this on the Cask via `verified:`, but the Formula
 // has no equivalent -- so we gate both at generator time.
-const ARTIFACT_URL_PREFIX = "https://github.com/burin-labs/burin-code/"
+const ARTIFACT_URL_HOST = "github.com"
+const ARTIFACT_URL_PATH_PREFIX = "/burin-labs/burin-code/releases/download/"
 
 function requireArtifact(value, name) {
   if (typeof value !== "object" || value === null) {
@@ -120,9 +121,21 @@ function requireArtifact(value, name) {
 
 function requireArtifactUrl(value, name) {
   const url = requireString(value, name)
-  if (!url.startsWith(ARTIFACT_URL_PREFIX)) {
+  let parsed
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error(`release manifest field ${name} must be a valid URL`)
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.hostname !== ARTIFACT_URL_HOST ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    !parsed.pathname.startsWith(ARTIFACT_URL_PATH_PREFIX)
+  ) {
     throw new Error(
-      `release manifest field ${name} must start with ${ARTIFACT_URL_PREFIX} (got ${url})`,
+      `release manifest field ${name} must be a GitHub release asset URL under https://${ARTIFACT_URL_HOST}${ARTIFACT_URL_PATH_PREFIX} (got ${url})`,
     )
   }
   return url
