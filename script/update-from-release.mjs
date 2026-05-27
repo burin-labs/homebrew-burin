@@ -11,8 +11,17 @@ export function updateFromReleaseManifest(path) {
     "minimumSystemVersion",
   )
   const cliVersion = requireString(manifest.cliVersion ?? manifest.version, "cliVersion")
-  const dmg = requireArtifact(manifest.artifacts?.["macos-arm64-dmg"], "macos-arm64-dmg")
-  const cli = requireArtifact(manifest.artifacts?.["cli-npm-tarball"], "cli-npm-tarball")
+  const releaseTag = releaseTagForVersion(version)
+  const dmg = requireArtifact(
+    manifest.artifacts?.["macos-arm64-dmg"],
+    "macos-arm64-dmg",
+    releaseTag,
+  )
+  const cli = requireArtifact(
+    manifest.artifacts?.["cli-npm-tarball"],
+    "cli-npm-tarball",
+    releaseTag,
+  )
 
   write("Casks/burin-code.rb", renderCask({ version, dmg, minimumSystemVersion }))
   write("Formula/burin.rb", renderFormula({ version: cliVersion, cli }))
@@ -107,19 +116,20 @@ Install smoke runs when the referenced release assets are publicly reachable.
 const ARTIFACT_URL_HOST = "github.com"
 const ARTIFACT_URL_PATH_PREFIX = "/burin-labs/burin-code/releases/download/"
 
-function requireArtifact(value, name) {
+function requireArtifact(value, name, releaseTag) {
   if (typeof value !== "object" || value === null) {
     throw new Error(`release manifest is missing artifacts.${name}`)
   }
+  const path = requireString(value.path, `${name}.path`)
   return {
-    path: requireString(value.path, `${name}.path`),
+    path,
     sha256: requireSha256(value.sha256, `${name}.sha256`),
     sizeBytes: requireNumber(value.sizeBytes, `${name}.sizeBytes`),
-    url: requireArtifactUrl(value.url, `${name}.url`),
+    url: requireArtifactUrl(value.url, `${name}.url`, releaseTag, path),
   }
 }
 
-function requireArtifactUrl(value, name) {
+function requireArtifactUrl(value, name, releaseTag, artifactPath) {
   const url = requireString(value, name)
   let parsed
   try {
@@ -127,18 +137,30 @@ function requireArtifactUrl(value, name) {
   } catch {
     throw new Error(`release manifest field ${name} must be a valid URL`)
   }
+  const expectedPathPrefix = `${ARTIFACT_URL_PATH_PREFIX}${releaseTag}/`
+  const artifactName = artifactPath.split("/").pop()
+  const urlArtifactName = decodeURIComponent(parsed.pathname.split("/").pop() ?? "")
   if (
     parsed.protocol !== "https:" ||
     parsed.hostname !== ARTIFACT_URL_HOST ||
     parsed.username !== "" ||
     parsed.password !== "" ||
-    !parsed.pathname.startsWith(ARTIFACT_URL_PATH_PREFIX)
+    !parsed.pathname.startsWith(expectedPathPrefix)
   ) {
     throw new Error(
-      `release manifest field ${name} must be a GitHub release asset URL under https://${ARTIFACT_URL_HOST}${ARTIFACT_URL_PATH_PREFIX} (got ${url})`,
+      `release manifest field ${name} must be a GitHub release asset URL under https://${ARTIFACT_URL_HOST}${expectedPathPrefix} (got ${url})`,
+    )
+  }
+  if (urlArtifactName !== artifactName) {
+    throw new Error(
+      `release manifest field ${name} URL artifact name must match ${artifactPath} (got ${urlArtifactName})`,
     )
   }
   return url
+}
+
+function releaseTagForVersion(version) {
+  return version.startsWith("v") ? version : `v${version}`
 }
 
 function requireString(value, name) {
