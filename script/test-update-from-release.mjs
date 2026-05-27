@@ -144,6 +144,64 @@ try {
     /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-code\/releases\/download\//,
   )
 
+  const wrongReleaseTagManifest = join(root, "release-wrong-tag.json")
+  writeFileSync(
+    wrongReleaseTagManifest,
+    `${JSON.stringify({
+      schemaVersion: 2,
+      version: "1.2.3",
+      cliVersion: "1.2.4",
+      minimumSystemVersion: "14.0",
+      artifacts: {
+        "macos-arm64-dmg": {
+          path: "Burin.Code.dmg",
+          sha256: "a".repeat(64),
+          sizeBytes: 10,
+          url: "https://github.com/burin-labs/burin-code/releases/download/v1.2.2/Burin.Code.dmg",
+        },
+        "cli-npm-tarball": {
+          path: "burin-cli-1.2.4.tgz",
+          sha256: "b".repeat(64),
+          sizeBytes: 20,
+          url: "https://github.com/burin-labs/burin-code/releases/download/v1.2.3/burin-cli-1.2.4.tgz",
+        },
+      },
+    })}\n`,
+  )
+  assert.throws(
+    () => updateFromReleaseManifest(wrongReleaseTagManifest),
+    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-code\/releases\/download\/v1\.2\.3\//,
+  )
+
+  const mismatchedArtifactNameManifest = join(root, "release-mismatched-artifact-name.json")
+  writeFileSync(
+    mismatchedArtifactNameManifest,
+    `${JSON.stringify({
+      schemaVersion: 2,
+      version: "1.2.3",
+      cliVersion: "1.2.4",
+      minimumSystemVersion: "14.0",
+      artifacts: {
+        "macos-arm64-dmg": {
+          path: "Burin.Code.dmg",
+          sha256: "a".repeat(64),
+          sizeBytes: 10,
+          url: "https://github.com/burin-labs/burin-code/releases/download/v1.2.3/Other.dmg",
+        },
+        "cli-npm-tarball": {
+          path: "burin-cli-1.2.4.tgz",
+          sha256: "b".repeat(64),
+          sizeBytes: 20,
+          url: "https://github.com/burin-labs/burin-code/releases/download/v1.2.3/burin-cli-1.2.4.tgz",
+        },
+      },
+    })}\n`,
+  )
+  assert.throws(
+    () => updateFromReleaseManifest(mismatchedArtifactNameManifest),
+    /URL artifact name must match Burin\.Code\.dmg/,
+  )
+
   console.log("test-update-from-release: OK")
 } finally {
   process.chdir(originalCwd)
