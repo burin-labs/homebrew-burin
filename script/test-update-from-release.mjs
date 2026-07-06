@@ -47,6 +47,8 @@ try {
   assert.match(cask, /depends_on macos: :sonoma/)
   assert.match(formula, /url "https:\/\/github\.com\/burin-labs\/burin-code\/releases\/download\/v1\.2\.3\/burin-cli-1\.2\.4\.tgz"/)
   assert.match(formula, /sha256 "bbbbbbbb/)
+  assert.match(readme, /brew install harn/)
+  assert.match(readme, /`harn`: see `Formula\/harn\.rb`/)
   assert.match(readme, /`burin`: 1\.2\.4/)
   assert.match(readme, /`burin-code`: 1\.2\.3/)
 
