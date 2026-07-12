@@ -109,7 +109,7 @@ node script/update-from-release.mjs --release-manifest /path/to/release.json
 The \`harn\` formula is generated from a Harn GitHub release JSON object:
 
 \`\`\`sh
-gh release view v0.9.17 --repo burin-labs/harn --json tagName,assets \\
+gh release view --repo burin-labs/harn --json tagName,assets \\
   > /tmp/harn-release.json
 node script/update-harn-from-release.mjs --release-json /tmp/harn-release.json
 \`\`\`

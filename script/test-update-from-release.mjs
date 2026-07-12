@@ -51,6 +51,11 @@ try {
   assert.match(readme, /`harn`: see `Formula\/harn\.rb`/)
   assert.match(readme, /`burin`: 1\.2\.4/)
   assert.match(readme, /`burin-code`: 1\.2\.3/)
+  assert.match(
+    readme,
+    /gh release view --repo burin-labs\/harn --json tagName,assets/,
+  )
+  assert.doesNotMatch(readme, /gh release view v\d/)
 
   assert.match(
     renderCaskFromMinimumSystemVersion("26.0"),
