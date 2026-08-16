@@ -17,14 +17,22 @@ export function updateFromReleaseManifest(path) {
     "macos-arm64-dmg",
     releaseTag,
   )
-  const cli = requireArtifact(
+  // The formula installs the standalone per-platform archive, not the npm
+  // shim. The shim carries no binary of its own: it resolves one from a
+  // per-platform optionalDependency and its postinstall soft-fails when that
+  // package is absent, so installing it produced an exit-0 install and a
+  // "runtime binary not found" error on first run. The shim tarball is still
+  // fetched, but only for the pipelines and provider catalog the binary reads
+  // from `share/burin`.
+  const binaries = requireBinaryArtifacts(manifest.artifacts, releaseTag)
+  const bundle = requireArtifact(
     manifest.artifacts?.["cli-npm-tarball"],
     "cli-npm-tarball",
     releaseTag,
   )
 
   write("Casks/burin-code.rb", renderCask({ version, dmg, minimumSystemVersion }))
-  write("Formula/burin.rb", renderFormula({ version: cliVersion, cli }))
+  write("Formula/burin.rb", renderFormula({ version: cliVersion, binaries, bundle }))
   write("README.md", renderReadme({ appVersion: version, cliVersion }))
 }
 
@@ -53,30 +61,98 @@ end
 `
 }
 
-export function renderFormula({ version, cli }) {
+/// Release-manifest key -> the Homebrew block the archive belongs in.
+///
+/// Windows is published too, and deliberately absent here: Homebrew has no
+/// target for it.
+export const BINARY_ARTIFACTS = [
+  { key: "cli-darwin-arm64", os: "macos", cpu: "arm" },
+  { key: "cli-darwin-x64", os: "macos", cpu: "intel" },
+  { key: "cli-linux-x64", os: "linux", cpu: "intel" },
+  { key: "cli-linux-arm64", os: "linux", cpu: "arm" },
+]
+
+export function renderFormula({ version, binaries, bundle }) {
   return `class Burin < Formula
   desc "AI-native terminal coding workbench"
   homepage "https://burincode.com/"
-  url "${cli.url}"
-  sha256 "${cli.sha256}"
+  version "${version}"
   license "Apache-2.0"
 
-  depends_on "node@22"
+${renderPlatformBlocks(binaries)}
+  # Pipelines and the provider catalog, which the binary reads from
+  # \`share/burin\` and which the standalone archive does not carry. Without
+  # them \`burin --version\` still answers and every agent turn fails.
+  resource "bundle" do
+    url "${bundle.url}"
+    sha256 "${bundle.sha256}"
+  end
 
   def install
-    node = Formula["node@22"]
-    ENV["npm_config_audit"] = "false"
-    ENV["npm_config_fund"] = "false"
-    ENV["npm_config_update_notifier"] = "false"
-    system node.opt_bin/"npm", "install", "--global", "--prefix", libexec, cached_download
-    bin.install_symlink libexec/"bin/burin"
+    libexec.install "burin"
+    resource("bundle").stage do
+      (share/"burin").install "pipelines", "provider-catalog", "providers.toml"
+    end
+
+    # The wrapper exists for one reason, and it is a workaround: \`burin\` has
+    # two pipeline resolvers that disagree. The interactive and engine-driven
+    # paths call \`resolve_pipelines_root\`, which probes
+    # \`<exe_dir>/../share/burin/pipelines\` and finds this layout. The
+    # harn-delegated \`burin headless\` subcommands use a second resolver that
+    # checks only BURIN_PIPELINE_DIR, a walk up from the project root, and
+    # ~/.burin/pipelines — never beside the executable. Measured: without this,
+    # \`burin --version\` answers and \`burin headless diagnose\` fails with
+    # "Burin pipeline directory not found. Set BURIN_PIPELINE_DIR or run from
+    # the burin-code repo", advice no installed user can follow.
+    #
+    # Assigning only when unset so a checkout developer's own value still wins.
+    # Delete this once the resolvers are unified upstream; the layout above is
+    # already what \`resolve_pipelines_root\` looks for.
+    (bin/"burin").write <<~SH
+      #!/bin/bash
+      export BURIN_PIPELINE_DIR="\${BURIN_PIPELINE_DIR:-#{share}/burin/pipelines}"
+      exec "#{libexec}/burin" "$@"
+    SH
   end
 
   test do
-    assert_match "burin", shell_output("#{bin}/burin --version")
+    assert_match version.to_s, shell_output("#{bin}/burin --version")
+    assert_path_exists share/"burin/pipelines/mode/auto.harn"
+    # A bare binary answers --version with no pipelines at all, so the version
+    # check alone cannot tell a working install from a broken one.
+    refute_match "pipeline directory not found",
+                 shell_output("#{bin}/burin headless diagnose 2>&1 || true")
   end
 end
 `
+}
+
+function renderPlatformBlocks(binaries) {
+  const byOs = new Map()
+  for (const { key, os, cpu } of BINARY_ARTIFACTS) {
+    const artifact = binaries[key]
+    if (!artifact) {
+      continue
+    }
+    if (!byOs.has(os)) {
+      byOs.set(os, [])
+    }
+    byOs.get(os).push({ cpu, artifact })
+  }
+  return [...byOs.entries()]
+    .map(([os, entries]) => {
+      const inner = entries
+        .map(
+          ({ cpu, artifact }) =>
+            `    on_${cpu} do\n` +
+            `      url "${artifact.url}"\n` +
+            `      sha256 "${artifact.sha256}"\n` +
+            `    end\n`,
+        )
+        .join("\n")
+      return `  on_${os} do\n${inner}  end\n`
+    })
+    .join("\n")
 }
 
 export function renderReadme({ appVersion, cliVersion }) {
@@ -116,6 +192,9 @@ node script/update-harn-from-release.mjs --release-json /tmp/harn-release.json
 
 CI always runs \`brew style\`, \`brew audit\`, and the generator fixture tests.
 Install smoke runs when the referenced release assets are publicly reachable.
+
+See [RELEASING.md](RELEASING.md) for what has to be true before a regenerated
+formula actually installs, and what changes when \`burin-code\` goes public.
 `
 }
 
@@ -126,6 +205,20 @@ Install smoke runs when the referenced release assets are publicly reachable.
 // has no equivalent -- so we gate both at generator time.
 const ARTIFACT_URL_HOST = "github.com"
 const ARTIFACT_URL_PATH_PREFIX = "/burin-labs/burin-code/releases/download/"
+
+/// Every Homebrew-servable platform archive, all of them required.
+///
+/// A missing key is a release-pipeline failure, not a platform to silently
+/// omit: a formula rendered without one installs cleanly on that platform and
+/// then has no URL to fetch, so the failure surfaces at the user rather than
+/// at the generator that could have caught it.
+function requireBinaryArtifacts(artifacts, releaseTag) {
+  const resolved = {}
+  for (const { key } of BINARY_ARTIFACTS) {
+    resolved[key] = requireArtifact(artifacts?.[key], key, releaseTag)
+  }
+  return resolved
+}
 
 function requireArtifact(value, name, releaseTag) {
   if (typeof value !== "object" || value === null) {

@@ -42,7 +42,14 @@ jobs:
       - name: Harn formula style
         run: brew style burin-labs/burin/harn
       - name: Formula audit
-        run: brew audit --formula burin-labs/burin/burin
+        run: |
+          # The formula pins `version` and Homebrew calls that redundant,
+          # because it scans a version out of the URL. What it scans is the
+          # release tag, which is the app version; the formula ships the CLI,
+          # whose version is `cliVersion` in release.json and can differ. So
+          # the pin is the correct value and the scan is not, and only that one
+          # audit is skipped.
+          brew audit --formula --except=version burin-labs/burin/burin
       - name: Harn formula audit
         run: |
           # harn ships target-specific archives. Homebrew infers the arm URLs
