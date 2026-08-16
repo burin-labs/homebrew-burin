@@ -79,49 +79,50 @@ export function renderFormula({ version, binaries, bundle }) {
   version "${version}"
   license "Apache-2.0"
 
+  # \`burin\` delegates its agent subcommands to the \`harn\` runtime, which it
+  # finds on PATH. Without this the binary installs, answers \`--version\`, and
+  # then tells the user to run a script from a repository they do not have.
+  depends_on "burin-labs/burin/harn"
+
 ${renderPlatformBlocks(binaries)}
-  # Pipelines and the provider catalog, which the binary reads from
-  # \`share/burin\` and which the standalone archive does not carry. Without
-  # them \`burin --version\` still answers and every agent turn fails.
+  # Pipelines, the provider catalog, and the Harn package boundary, which the
+  # binary reads from \`share/burin\` and which the standalone archive does not
+  # carry. Without them \`burin --version\` still answers and every agent turn
+  # fails.
   resource "bundle" do
     url "${bundle.url}"
     sha256 "${bundle.sha256}"
   end
 
   def install
-    libexec.install "burin"
+    # No wrapper and no environment variables: \`burin\` probes
+    # \`<exe_dir>/../share/burin/pipelines\` for its pipelines, and its provider
+    # catalog, providers.toml, and Harn package boundary resolve beside them,
+    # so \`bin\` + \`share\` is already the layout it looks for (burin-code#6417).
+    bin.install "burin"
     resource("bundle").stage do
-      (share/"burin").install "pipelines", "provider-catalog", "providers.toml"
+      # \`harn.toml\` grants the bundled pipelines the privileged host dispatch
+      # they are built on, and \`harn.lock\` + \`.harn\` resolve the packages that
+      # manifest depends on. Harn finds all three by walking up from the
+      # pipeline it compiles, so they belong beside \`pipelines\`, not inside it
+      # (burin-code#6422).
+      (share/"burin").install "pipelines", "provider-catalog", "providers.toml",
+                              "harn.toml", "harn.lock", ".harn"
     end
-
-    # The wrapper exists for one reason, and it is a workaround: \`burin\` has
-    # two pipeline resolvers that disagree. The interactive and engine-driven
-    # paths call \`resolve_pipelines_root\`, which probes
-    # \`<exe_dir>/../share/burin/pipelines\` and finds this layout. The
-    # harn-delegated \`burin headless\` subcommands use a second resolver that
-    # checks only BURIN_PIPELINE_DIR, a walk up from the project root, and
-    # ~/.burin/pipelines — never beside the executable. Measured: without this,
-    # \`burin --version\` answers and \`burin headless diagnose\` fails with
-    # "Burin pipeline directory not found. Set BURIN_PIPELINE_DIR or run from
-    # the burin-code repo", advice no installed user can follow.
-    #
-    # Assigning only when unset so a checkout developer's own value still wins.
-    # Delete this once the resolvers are unified upstream; the layout above is
-    # already what \`resolve_pipelines_root\` looks for.
-    (bin/"burin").write <<~SH
-      #!/bin/bash
-      export BURIN_PIPELINE_DIR="\${BURIN_PIPELINE_DIR:-#{share}/burin/pipelines}"
-      exec "#{libexec}/burin" "$@"
-    SH
   end
 
   test do
+    require "json"
+
     assert_match version.to_s, shell_output("#{bin}/burin --version")
     assert_path_exists share/"burin/pipelines/mode/auto.harn"
-    # A bare binary answers --version with no pipelines at all, so the version
-    # check alone cannot tell a working install from a broken one.
-    refute_match "pipeline directory not found",
-                 shell_output("#{bin}/burin headless diagnose 2>&1 || true")
+    # A bare binary answers --version with no pipelines at all, and a binary
+    # that finds its pipelines can still fail to compile them. So run a real
+    # subcommand and read its result, rather than grepping for the absence of
+    # one error string.
+    report = JSON.parse(shell_output("#{bin}/burin headless --project #{testpath} diagnose"))
+    assert_equal "diagnose", report["action"]
+    assert_equal 0, report["exit_code"]
   end
 end
 `

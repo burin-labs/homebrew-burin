@@ -87,7 +87,7 @@ try {
     /on_linux do\n {4}on_intel do\n {6}url ".*burin-x86_64-unknown-linux-gnu\.tar\.gz"/,
   )
   assert.match(formula, /burin-aarch64-unknown-linux-gnu\.tar\.gz/)
-  assert.match(formula, /libexec\.install "burin"/)
+  assert.match(formula, /bin\.install "burin"/)
 
   // Homebrew has no Windows target, so the published Windows archive must not
   // reach the formula.
@@ -106,21 +106,32 @@ try {
   // asserted rather than assumed.
   assert.match(
     formula,
-    /\(share\/"burin"\)\.install "pipelines", "provider-catalog", "providers\.toml"/,
+    /\(share\/"burin"\)\.install "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn"/,
   )
   assert.match(formula, /assert_path_exists share\/"burin\/pipelines\/mode\/auto\.harn"/)
 
-  // The wrapper is a workaround for two disagreeing pipeline resolvers, and it
-  // must not clobber a value the user already set, so the default-assignment
-  // form is the part worth pinning.
-  assert.match(
-    formula,
-    /export BURIN_PIPELINE_DIR="\$\{BURIN_PIPELINE_DIR:-#\{share\}\/burin\/pipelines\}"/,
-  )
+  // The Harn package boundary is what lets the bundled pipelines compile
+  // outside a checkout, and `harn` is what compiles them. A formula that
+  // installs the tree without either produces a binary that finds its
+  // pipelines and cannot run one.
+  assert.match(formula, /depends_on "burin-labs\/burin\/harn"/)
+
+  // The test block reads a real result. Grepping for the absence of one known
+  // error string passed against a product that could not run at all.
+  assert.match(formula, /assert_equal 0, report\["exit_code"\]/)
+  assert.doesNotMatch(formula, /refute_match "pipeline directory not found"/)
+
+  // The formula shipped a wrapper setting BURIN_PIPELINE_DIR while burin had
+  // two disagreeing pipeline resolvers. burin-code#6417 gave resolution one
+  // owner that probes `<exe_dir>/../share/burin/pipelines`, so the layout above
+  // is enough and the wrapper is gone. Asserted so it does not creep back as a
+  // fix for something it would only mask.
+  assert.doesNotMatch(formula, /BURIN_PIPELINE_DIR/)
+  assert.doesNotMatch(formula, /libexec/)
 
   // A bare binary answers --version with no pipelines at all, so the formula's
   // own test has to reach past it.
-  assert.match(formula, /burin headless diagnose/)
+  assert.match(formula, /burin headless --project #\{testpath\} diagnose/)
 
   assert.match(readme, /brew install harn/)
   assert.match(readme, /`harn`: see `Formula\/harn\.rb`/)

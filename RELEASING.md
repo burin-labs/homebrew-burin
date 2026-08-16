@@ -13,7 +13,7 @@ Nothing else in this repository changes.
 
 ## Before that commit can work
 
-Three things must be true, and none of them are in this repository. Check them
+Six things must be true, and only one of them is in this repository. Check them
 first, because the generator will happily produce a formula that installs
 cleanly and then fails for the user.
 
@@ -24,7 +24,27 @@ cleanly and then fails for the user.
    `cli-darwin-arm64`, `cli-darwin-x64`, `cli-linux-x64`, and `cli-linux-arm64`
    in `release.json`, and refuses to render without all four. They first appear
    in releases built after burin-code#6405; `v0.2.0` predates it.
-3. **`burin-code` release assets are publicly readable.** This is what the
+3. **The release was built after burin-code#6417.** That is the commit where
+   `burin` learned to look for its pipelines beside its own executable. The
+   formula no longer sets `BURIN_PIPELINE_DIR`, so a binary older than #6417
+   installs, answers `--version`, and fails every agent turn. There is a window
+   between #6405 and #6417 where a release carries the archives without the
+   fix; those releases need the wrapper this formula no longer has, so do not
+   point the formula at one.
+4. **The release was built after burin-code#6422.** That is where the CLI
+   bundle started carrying `harn.toml`, `harn.lock`, and `.harn`, the Harn
+   package boundary that lets the bundled pipelines compile outside a
+   checkout. The formula installs all three; without them in the tarball the
+   `install` block fails outright, which is the loud version of the failure.
+5. **`Formula/harn.rb` is at or above the Harn version `burin` was built
+   against.** `burin` delegates its agent subcommands to `harn`, and the
+   formula now depends on it. A `harn` older than the bundle's own pin
+   recompiles every pipeline from source instead of loading the precompiled
+   bytecode that ships with it, and an old enough one cannot compile them at
+   all. Regenerate `harn.rb` from the matching Harn release in the same
+   commit. As of this writing `harn.rb` pins 0.9.17 while `burin-code` pins
+   0.10.102, so this is a real gap, not a formality.
+6. **`burin-code` release assets are publicly readable.** This is what the
    whole flip is waiting on.
 
 ## What changes on its own
@@ -47,23 +67,46 @@ succeeded with exit 0 and failed at first run with `burin runtime binary not
 found`. The shim tarball is still downloaded, as a `resource`, but only for the
 pipelines and provider catalog it carries.
 
-Those land in `share/burin/`, which is where the binary's release-install
-resolver looks for them. Without them `burin --version` still answers and every
-agent turn fails, so the formula's own `test` block runs
-`burin headless diagnose` rather than stopping at the version check.
+Those land in `share/burin/`, which is where the binary looks for them: it
+probes `<exe_dir>/../share/burin/pipelines`, so `bin` plus `share` is already
+the layout it expects. Alongside them go `harn.toml`, `harn.lock`, and
+`.harn`: the manifest grants the bundled pipelines the privileged host
+dispatch they are built on, and the other two resolve the packages that
+manifest depends on. Harn finds all three by walking up from the pipeline it
+compiles, so they sit beside `pipelines`, never inside it, and a user's own
+project never inherits the grant.
 
-The wrapper script in `bin/burin` is a **workaround**, not a design choice. It
-sets `BURIN_PIPELINE_DIR` only when unset, because `burin` has two pipeline
-resolvers and only one of them knows about install layouts. Delete it once
-burin-code#6410 is fixed; the layout it points at is already what the other
-resolver looks for.
+The `test` block runs `burin headless diagnose` and reads its JSON result,
+because each of the failures above is invisible one layer up. `--version`
+answers with no pipelines at all; pipelines resolve fine and still fail to
+compile without the manifest. Only a real subcommand's own report separates a
+working install from a broken one.
+
+There is no wrapper script and no environment variable. The formula used to
+install one, setting `BURIN_PIPELINE_DIR`, because `burin` had three pipeline
+resolvers and the two behind `headless` never looked beside the executable.
+burin-code#6417 gave resolution one owner that does, so the wrapper became a
+variable that masked a bug instead of fixing one. Preconditions 3 and 4 above
+are the cost of removing it: the formula now depends on the binary and its
+bundle being new enough.
+
+One known limitation, measured: a **read-only install prefix** fails, because
+Harn opens `.harn/package-install.lock` for write. A standard `brew` prefix is
+user-writable, so this does not affect a normal install; a root-owned or
+shared prefix would need burin-code to stage the package boundary into a
+writable directory the way the macOS app already does.
 
 ## Verifying before a real release exists
 
 The generator's URL allowlist only accepts `burin-code` release assets, so a
 local rehearsal renders through `renderFormula` directly with `file://` URLs
-and a locally built archive in the same layout: a `.tar.gz` with the `burin`
-binary at its root, plus the npm tarball for the bundle resource. Install it
-from a scratch tap with `brew install --build-from-source`, then run
-`burin headless diagnose` from a directory outside any checkout, with a clean
-environment. A passing `--version` is not evidence on its own.
+and locally built stand-ins in the same layout: a `.tar.gz` with the `burin`
+binary at its root, plus `npm pack` output from a `burin-code` checkout for
+the bundle resource. Install it from a scratch tap with
+`brew install --build-from-source`, then run `burin headless diagnose` from a
+directory outside any checkout, with a clean `HOME` and a `PATH` carrying only
+`harn` and the system directories.
+
+Read the result, not the exit path: a passing `--version` is not evidence, and
+neither is the absence of a particular error. `exit_code: 0` in the diagnose
+report is. Finish by removing the scratch tap and the installed formula.
