@@ -27,6 +27,10 @@ try {
   assert.match(formula, /sha256 "dddddddd/)
   assert.match(formula, /bin\.install "harn"/)
   assert.match(formula, /harn --help/)
+  // The tap is how a stranger finds this software, so the formula has to say
+  // what it is before they depend on it.
+  assert.match(formula, /pre-release software and is not yet supported/)
+  assert.match(formula, /Expect breaking changes between releases/)
 
   const maliciousReleasePath = join(root, "harn-release-malicious.json")
   const malicious = releaseFixture()
