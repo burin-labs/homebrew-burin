@@ -61,6 +61,19 @@ export function renderHarnFormula({ version, tag, assets }) {
     bin.install "harn"
   end
 
+  def caveats
+    <<~EOS
+      Harn is pre-release software and is not yet supported.
+
+      Expect breaking changes between releases, including to the command line
+      interface and to on-disk formats. There is no compatibility guarantee
+      between any two versions, and no support channel.
+
+      Releases move quickly. Run \`brew upgrade harn\` often; an install left
+      alone for a few days is likely to be several releases behind.
+    EOS
+  end
+
   test do
     assert_match version.to_s, shell_output("#{bin}/harn --version")
     assert_match "serve", shell_output("#{bin}/harn --help")
