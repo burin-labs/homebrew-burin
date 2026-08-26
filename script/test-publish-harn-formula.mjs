@@ -80,7 +80,7 @@ await test("positive control publishes and proves one exact GitHub-signed head",
   assert.equal(receipt.post_merge_formula_sha256, null)
 })
 
-await test("valid v2 evidence fails closed under one-field identity mutations", async () => {
+await test("valid v2 evidence fails closed under identity mutations", async () => {
   const manifest = fixtureManifest()
   const adapter = new FakeAdapter(manifest)
   const receipt = await publishHarnFormula({manifest, workflowRunId: 4242, adapter, checkAttempts: 1})
@@ -91,7 +91,11 @@ await test("valid v2 evidence fails closed under one-field identity mutations", 
     ["repository", (copy) => { copy.repository = "burin-labs/another-tap" }, /repository mismatch/],
     ["workflow run", (copy) => { copy.workflow_run_id += 1 }, /workflow run mismatch/],
     ["release tag", (copy) => { copy.release_tag = "v1.2.4" }, /release tag mismatch/],
-    ["base head", (copy) => { copy.base_head_sha = "b".repeat(40) }, /pull request identity mismatch/],
+    ["base head", (copy) => { copy.base_head_sha = "b".repeat(40) }, /base head mismatch/],
+    ["coupled receipt and PR base", (copy) => {
+      copy.base_head_sha = "b".repeat(40)
+      copy.pull_request.base_sha = "b".repeat(40)
+    }, /base head mismatch/],
     ["candidate branch", (copy) => { copy.branch = "automation/other" }, /candidate branch mismatch/],
     ["candidate head", (copy) => { copy.head_sha = "b".repeat(40) }, /pull request identity mismatch/],
     ["PR number", (copy) => { copy.pull_request.number += 1 }, /pull request identity mismatch/],
@@ -193,6 +197,18 @@ await test("moved published head fails by name", async () => {
     publishHarnFormula({manifest, workflowRunId: 4, adapter}),
     /published branch head moved/,
   )
+})
+
+await test("base movement during check polling cannot rewrite the projected producer base", async () => {
+  const manifest = fixtureManifest()
+  const adapter = new FakeAdapter(manifest)
+  adapter.moveBaseAfterCommit = true
+  await rejectsNamed(
+    publishHarnFormula({manifest, workflowRunId: 43, adapter, checkAttempts: 1}),
+    /producer pull request #73 base identity does not match/,
+  )
+  assert.deepEqual(adapter.projectionReads.map(({baseHead}) => baseHead), [BASE_HEAD, BASE_HEAD])
+  assert.equal(adapter.pullRequestBodyUpdates.length, 0)
 })
 
 await test("unsigned exact head fails by name", async () => {
@@ -404,6 +420,7 @@ function receiptExpectations(manifest, workflowRunId) {
     manifest,
     formulaSha256: sha256(renderHarnFormula(manifest)),
     baseBranch: "main",
+    baseHead: BASE_HEAD,
   }
 }
 
@@ -433,6 +450,7 @@ class FakeAdapter {
     this.dropCreatedPull = false
     this.rejectLease = false
     this.moveAfterCommit = false
+    this.moveBaseAfterCommit = false
     this.wrongBranchName = null
     this.onCreateBranch = null
   }
@@ -443,15 +461,21 @@ class FakeAdapter {
 
   async observe() {
     let branch = this.branch ? structuredClone(this.branch) : null
+    let baseHead = BASE_HEAD
+    let pull = this.pull ? structuredClone(this.pull) : null
     if (branch && this.wrongBranchName) branch.name = this.wrongBranchName
     if (branch && this.moveAfterCommit && this.commitLeases.length > 0) {
       branch.head_sha = MOVED_HEAD
     }
+    if (this.moveBaseAfterCommit && this.commitLeases.length > 0) {
+      baseHead = MOVED_HEAD
+      if (pull) pull.base_sha = MOVED_HEAD
+    }
     return {
       repository_id: "repository-id",
-      base: {head_sha: BASE_HEAD, formula: this.baseFormula},
+      base: {head_sha: baseHead, formula: this.baseFormula},
       branch,
-      pull_requests: this.pull ? [structuredClone(this.pull)] : [],
+      pull_requests: pull ? [pull] : [],
     }
   }
 

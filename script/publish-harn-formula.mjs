@@ -198,14 +198,25 @@ function assertExactSignedHead(observation, branch, headSha, formulaSha256) {
   }
 }
 
-function assertExactPullRequestIdentity({pull, repository, baseBranch, branch, headSha}) {
+function assertExactPullRequestIdentity({
+  pull,
+  repository,
+  baseBranch,
+  baseHead,
+  branch,
+  headSha,
+}) {
   if (!Number.isSafeInteger(pull?.number) || pull.number <= 0) {
     throw new Error("producer pull request number is missing")
   }
   if (pull.url !== `https://github.com/${repository}/pull/${pull.number}`) {
     throw new Error(`producer pull request #${pull.number} URL does not match its repository`)
   }
-  if (pull.base_ref !== baseBranch || !GIT_SHA.test(pull.base_sha ?? "")) {
+  if (
+    pull.base_ref !== baseBranch
+    || !GIT_SHA.test(pull.base_sha ?? "")
+    || pull.base_sha !== baseHead
+  ) {
     throw new Error(`producer pull request #${pull.number} base identity does not match`)
   }
   if (pull.head_ref !== branch || pull.head_sha !== headSha) {
@@ -218,7 +229,7 @@ function assertExactPullRequestIdentity({pull, repository, baseBranch, branch, h
     number: pull.number,
     url: pull.url,
     base_ref: pull.base_ref,
-    base_sha: pull.base_sha,
+    base_sha: baseHead,
     head_ref: pull.head_ref,
     head_sha: pull.head_sha,
     is_draft: false,
@@ -267,9 +278,10 @@ async function assertExactProducerHead({
   headSha,
   formulaSha256,
 }) {
-  assertExactSignedHead(observation, branch, headSha, formulaSha256)
+  const signature = assertExactSignedHead(observation, branch, headSha, formulaSha256)
   const projection = await adapter.candidateProjection({repository, baseHead, headSha})
   assertExactFormulaProjection(projection, baseHead, headSha)
+  return signature
 }
 
 function equalJson(left, right) {
@@ -303,6 +315,9 @@ export function validateProducerReceiptV2(receipt, expected) {
   }
   if (receipt.base_branch !== expected.baseBranch) throw new Error("producer receipt base branch mismatch")
   requireReceiptSha(receipt.base_head_sha, "producer receipt base_head_sha")
+  if (receipt.base_head_sha !== expected.baseHead) {
+    throw new Error("producer receipt base head mismatch")
+  }
   if (receipt.branch !== branchForRelease(expected.manifest.release_tag)) {
     throw new Error("producer receipt candidate branch mismatch")
   }
@@ -386,6 +401,7 @@ function receiptFor({
   workflowRunId,
   repository,
   baseBranch,
+  baseHead,
   branch,
   headSha,
   signature,
@@ -395,6 +411,7 @@ function receiptFor({
     pull,
     repository,
     baseBranch,
+    baseHead,
     branch,
     headSha,
   })
@@ -411,7 +428,7 @@ function receiptFor({
     formula_path: FORMULA_PATH,
     formula_sha256: formulaSha256,
     base_branch: baseBranch,
-    base_head_sha: pullRequest.base_sha,
+    base_head_sha: baseHead,
     branch,
     head_sha: headSha,
     pull_request: pullRequest,
@@ -426,6 +443,7 @@ function receiptFor({
     manifest,
     formulaSha256,
     baseBranch,
+    baseHead,
   })
 }
 
@@ -504,10 +522,30 @@ export async function publishHarnFormula({
     const publishedHead = observation.branch?.head_sha
     const mergedPull = publishedHead ? exactPullRequest(observation, publishedHead) : null
     if (mergedPull?.merged) {
-      const signature = assertExactSignedHead(observation, branch, publishedHead, formulaSha256)
+      const producerBaseHead = mergedPull.base_sha
+      if (!GIT_SHA.test(producerBaseHead ?? "")) {
+        throw new Error(`producer pull request #${mergedPull.number} base identity does not match`)
+      }
+      const signature = await assertExactProducerHead({
+        observation,
+        adapter,
+        repository,
+        branch,
+        baseHead: producerBaseHead,
+        headSha: publishedHead,
+        formulaSha256,
+      })
       if (mergedPull.post_merge_formula_sha256 !== formulaSha256) {
         throw new Error(`merged pull request #${mergedPull.number} formula digest mismatch`)
       }
+      assertExactPullRequestIdentity({
+        pull: mergedPull,
+        repository,
+        baseBranch,
+        baseHead: producerBaseHead,
+        branch,
+        headSha: publishedHead,
+      })
       mergedPull.body = await ensureProducerRunMarker(adapter, mergedPull, workflowRunId)
       return receiptFor({
         manifest,
@@ -515,6 +553,7 @@ export async function publishHarnFormula({
         workflowRunId,
         repository,
         baseBranch,
+        baseHead: producerBaseHead,
         branch,
         headSha: publishedHead,
         signature,
@@ -554,6 +593,7 @@ export async function publishHarnFormula({
       manifest,
       formulaSha256,
       baseBranch,
+      baseHead,
     })
   }
 
@@ -634,7 +674,14 @@ export async function publishHarnFormula({
       }
     } else if (pull.check_contexts?.length > 0) {
       const signature = assertExactSignedHead(observation, branch, headSha, formulaSha256)
-      assertExactPullRequestIdentity({pull, repository, baseBranch, branch, headSha})
+      assertExactPullRequestIdentity({
+        pull,
+        repository,
+        baseBranch,
+        baseHead,
+        branch,
+        headSha,
+      })
       pull.body = await ensureProducerRunMarker(adapter, pull, workflowRunId)
       if (pull.merged && !pull.post_merge_formula_sha256) {
         throw new Error(`merged pull request #${pull.number} is missing post-merge formula observation`)
@@ -645,6 +692,7 @@ export async function publishHarnFormula({
         workflowRunId,
         repository,
         baseBranch,
+        baseHead,
         branch,
         headSha,
         signature,
