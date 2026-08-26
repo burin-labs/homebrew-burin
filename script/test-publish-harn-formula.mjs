@@ -114,6 +114,36 @@ await test("unsigned exact head fails by name", async () => {
   )
 })
 
+await test("recovery accepts the exact signed formula-only producer head", async () => {
+  const manifest = fixtureManifest()
+  const adapter = new FakeAdapter(manifest)
+  adapter.seedTargetBranch({formula: renderHarnFormula(manifest), signed: true})
+  const receipt = await publishHarnFormula({
+    manifest,
+    workflowRunId: 51,
+    adapter,
+    checkAttempts: 1,
+  })
+  assert.equal(receipt.head_sha, SIGNED_HEAD)
+  assert.equal(adapter.createdBranches.length, 0)
+  assert.equal(adapter.commitLeases.length, 0)
+  assert.equal(adapter.projectionReads.length, 2)
+})
+
+await test("recovery rejects a signed matching formula with unrelated changes", async () => {
+  const manifest = fixtureManifest()
+  const adapter = new FakeAdapter(manifest)
+  adapter.seedTargetBranch({formula: renderHarnFormula(manifest), signed: true})
+  adapter.projectionFiles = [
+    {path: "Formula/harn.rb", status: "modified"},
+    {path: "README.md", status: "modified"},
+  ]
+  await rejectsNamed(
+    publishHarnFormula({manifest, workflowRunId: 52, adapter, checkAttempts: 1}),
+    /is not the exact formula-only projection.*changed files are not exactly modified Formula\/harn\.rb/,
+  )
+})
+
 await test("armed pull request cannot be rewritten", async () => {
   const manifest = fixtureManifest()
   const adapter = new FakeAdapter(manifest)
@@ -210,6 +240,11 @@ await test("workflow establishes the App identity before checkout and has no for
   assert(tokenStep >= 0 && checkoutStep > tokenStep)
   assert.match(workflow, /token: \$\{\{ steps\.app-token\.outputs\.token \}\}/)
   assert.match(workflow, /version:\n\s+description:[^\n]+\n\s+required: true\n\s+type: string/)
+  assert.match(
+    workflow,
+    /name: Upload typed producer receipt[\s\S]*?path: \$\{\{ runner\.temp \}\}\/harn-formula-receipt\.json[\s\S]*?if-no-files-found: error/,
+  )
+  assert.doesNotMatch(workflow, /if-no-files-found: ignore/)
   assert.doesNotMatch(workflow, /git push|force-with-lease|force: true/)
 })
 
@@ -255,6 +290,8 @@ class FakeAdapter {
     this.pull = null
     this.createdBranches = []
     this.commitLeases = []
+    this.projectionReads = []
+    this.projectionFiles = [{path: "Formula/harn.rb", status: "modified"}]
     this.otherBranches = new Map()
     this.assetDigests = new Map(manifest.assets.map((asset) => [asset.url, asset.sha256]))
     this.createdPullChecks = PASSING_CHECKS
@@ -292,6 +329,21 @@ class FakeAdapter {
       signature: {is_valid: true, was_signed_by_github: true, state: "VALID"},
     }
     this.onCreateBranch?.()
+  }
+
+  async candidateProjection({baseHead, headSha}) {
+    this.projectionReads.push({baseHead, headSha})
+    return {
+      base_head: baseHead,
+      merge_base_head: baseHead,
+      head_sha: headSha,
+      status: "ahead",
+      ahead_by: 1,
+      behind_by: 0,
+      total_commits: 1,
+      commit_shas: [headSha],
+      files: structuredClone(this.projectionFiles),
+    }
   }
 
   async commitFormula({branch, expectedHead, formula}) {

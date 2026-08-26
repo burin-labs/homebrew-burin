@@ -99,6 +99,53 @@ function assertExactSignedHead(observation, branch, headSha, formulaSha256) {
   }
 }
 
+function assertExactFormulaProjection(projection, baseHead, headSha) {
+  const failures = []
+  if (projection?.base_head !== baseHead) failures.push("base head differs")
+  if (projection?.merge_base_head !== baseHead) failures.push("merge base differs")
+  if (projection?.head_sha !== headSha) failures.push("candidate head differs")
+  if (projection?.status !== "ahead") failures.push(`status is ${projection?.status ?? "missing"}`)
+  if (projection?.ahead_by !== 1) failures.push(`ahead_by is ${projection?.ahead_by ?? "missing"}`)
+  if (projection?.behind_by !== 0) failures.push(`behind_by is ${projection?.behind_by ?? "missing"}`)
+  if (projection?.total_commits !== 1) {
+    failures.push(`total_commits is ${projection?.total_commits ?? "missing"}`)
+  }
+  if (
+    !Array.isArray(projection?.commit_shas)
+    || projection.commit_shas.length !== 1
+    || projection.commit_shas[0] !== headSha
+  ) {
+    failures.push("commit lineage is not the exact candidate")
+  }
+  if (
+    !Array.isArray(projection?.files)
+    || projection.files.length !== 1
+    || projection.files[0]?.path !== FORMULA_PATH
+    || projection.files[0]?.status !== "modified"
+  ) {
+    failures.push("changed files are not exactly modified Formula/harn.rb")
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `candidate head ${headSha} is not the exact formula-only projection from ${baseHead}: ${failures.join(", ")}`,
+    )
+  }
+}
+
+async function assertExactProducerHead({
+  observation,
+  adapter,
+  repository,
+  branch,
+  baseHead,
+  headSha,
+  formulaSha256,
+}) {
+  assertExactSignedHead(observation, branch, headSha, formulaSha256)
+  const projection = await adapter.candidateProjection({repository, baseHead, headSha})
+  assertExactFormulaProjection(projection, baseHead, headSha)
+}
+
 function receiptFor({ manifest, formulaSha256, workflowRunId, branch, headSha, pull, checks }) {
   return {
     schema_version: 1,
@@ -242,7 +289,15 @@ export async function publishHarnFormula({
   }
 
   observation = await adapter.observe({repository, baseBranch, branch})
-  assertExactSignedHead(observation, branch, headSha, formulaSha256)
+  await assertExactProducerHead({
+    observation,
+    adapter,
+    repository,
+    branch,
+    baseHead,
+    headSha,
+    formulaSha256,
+  })
 
   let pull = exactPullRequest(observation, headSha)
   if (!pull) {
@@ -264,7 +319,15 @@ export async function publishHarnFormula({
 
   for (let attempt = 1; attempt <= checkAttempts; attempt += 1) {
     observation = await adapter.observe({repository, baseBranch, branch})
-    assertExactSignedHead(observation, branch, headSha, formulaSha256)
+    await assertExactProducerHead({
+      observation,
+      adapter,
+      repository,
+      branch,
+      baseHead,
+      headSha,
+      formulaSha256,
+    })
     pull = exactPullRequest(observation, headSha)
     if (!pull) {
       if (attempt === checkAttempts) {
@@ -437,6 +500,28 @@ export function liveGitHubAdapter() {
             : null,
           check_contexts: pull.headRefOid === branchTarget?.oid ? contextsFrom(branchTarget) : [],
         })),
+      }
+    },
+
+    async candidateProjection({repository, baseHead, headSha}) {
+      const comparison = await gh([
+        "api",
+        `repos/${repository}/compare/${baseHead}...${headSha}`,
+      ])
+      return {
+        base_head: comparison.base_commit?.sha ?? null,
+        merge_base_head: comparison.merge_base_commit?.sha ?? null,
+        head_sha: comparison.commits?.at(-1)?.sha ?? null,
+        status: comparison.status ?? null,
+        ahead_by: comparison.ahead_by ?? null,
+        behind_by: comparison.behind_by ?? null,
+        total_commits: comparison.total_commits ?? null,
+        commit_shas: Array.isArray(comparison.commits)
+          ? comparison.commits.map((commit) => commit.sha)
+          : null,
+        files: Array.isArray(comparison.files)
+          ? comparison.files.map((file) => ({path: file.filename, status: file.status}))
+          : null,
       }
     },
 
