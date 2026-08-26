@@ -46,7 +46,7 @@ You should not normally need to run that by hand. Harn Fleet dispatches
 schedule is a recovery alarm if that release dispatch is missed. The producer
 downloads and SHA-256 verifies exactly the four supported macOS/Linux archives,
 publishes a GitHub-signed commit to
-`automation/bump-harn-formula/vX.Y.Z` under an exact-head lease, and opens an
+`automation/harn-formula-vX.Y.Z` under an exact-head lease, and opens an
 unarmed pull request for tap CI. Each successful run uploads a typed lifecycle
 receipt that records the release, assets, formula hash, exact branch and head,
 pull request, observed checks, and eventual merge fields.

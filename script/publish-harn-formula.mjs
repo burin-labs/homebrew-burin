@@ -12,7 +12,7 @@ import {
 } from "./update-harn-from-release.mjs"
 
 const FORMULA_PATH = "Formula/harn.rb"
-const BRANCH_ROOT = "automation/bump-harn-formula"
+const BRANCH_PREFIX = "automation/harn-formula-"
 const SHA256 = /^[0-9a-f]{64}$/
 const GIT_SHA = /^[0-9a-f]{40}$/
 const PRODUCER_RECEIPT_SCHEMA = "homebrew_burin.harn_formula_producer.v2"
@@ -24,12 +24,12 @@ export function branchForRelease(tag) {
   if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
     throw new Error(`release tag must look like vX.Y.Z, got ${tag}`)
   }
-  return `${BRANCH_ROOT}/${tag}`
+  return `${BRANCH_PREFIX}${tag}`
 }
 
 export function gitRefCreationRequest(repository, branch, baseHead) {
   const {owner, name} = splitRepository(repository)
-  if (!/^automation\/bump-harn-formula\/v\d+\.\d+\.\d+$/.test(branch)) {
+  if (!/^automation\/harn-formula-v\d+\.\d+\.\d+$/.test(branch)) {
     throw new Error(`formula branch has an invalid version-qualified name: ${branch}`)
   }
   if (!GIT_SHA.test(baseHead ?? "")) {
