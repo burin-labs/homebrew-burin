@@ -10,7 +10,9 @@ import {
 import {
   branchForRelease,
   checkSummary,
+  gitRefCreationRequest,
   producerRunIdFromBody,
+  producerFailureReceipt,
   publishHarnFormula,
   sha256,
   upsertProducerRunMarker,
@@ -29,6 +31,50 @@ const PASSING_CHECKS = [
 let tests = 0
 
 async function main() {
+await test("live branch creation uses the Git refs API with exact identity", async () => {
+  assert.deepEqual(
+    gitRefCreationRequest(
+      "burin-labs/homebrew-burin",
+      "automation/bump-harn-formula/v1.2.3",
+      BASE_HEAD,
+    ),
+    {
+      endpoint: "repos/burin-labs/homebrew-burin/git/refs",
+      payload: {
+        ref: "refs/heads/automation/bump-harn-formula/v1.2.3",
+        sha: BASE_HEAD,
+      },
+    },
+  )
+  assert.throws(
+    () => gitRefCreationRequest("burin-labs/homebrew-burin", "automation/other", BASE_HEAD),
+    /invalid version-qualified name/,
+  )
+  assert.throws(
+    () => gitRefCreationRequest("burin-labs/homebrew-burin", "automation/bump-harn-formula/v1.2.3", ""),
+    /exact Git SHA/,
+  )
+})
+
+await test("producer failures retain exact run identity in a typed receipt", async () => {
+  assert.deepEqual(
+    producerFailureReceipt({
+      repository: "burin-labs/homebrew-burin",
+      workflowRunId: 4242,
+      requestedVersion: "v1.2.3",
+      error: new Error("Ref cannot be created."),
+    }),
+    {
+      schema_version: "homebrew_burin.harn_formula_failure.v1",
+      state: "failed",
+      repository: "burin-labs/homebrew-burin",
+      workflow_run_id: 4242,
+      requested_version: "v1.2.3",
+      error: {message: "Ref cannot be created."},
+    },
+  )
+})
+
 await test("positive control publishes and proves one exact GitHub-signed head", async () => {
   const manifest = fixtureManifest()
   const adapter = new FakeAdapter(manifest)

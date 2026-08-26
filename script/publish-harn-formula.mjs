@@ -16,6 +16,7 @@ const BRANCH_ROOT = "automation/bump-harn-formula"
 const SHA256 = /^[0-9a-f]{64}$/
 const GIT_SHA = /^[0-9a-f]{40}$/
 const PRODUCER_RECEIPT_SCHEMA = "homebrew_burin.harn_formula_producer.v2"
+const PRODUCER_FAILURE_RECEIPT_SCHEMA = "homebrew_burin.harn_formula_failure.v1"
 const PRODUCER_RUN_MARKER_NAME = "harn-formula-producer-run"
 const PRODUCER_RUN_MARKER = /<!--\s*harn-formula-producer-run\s*:\s*([^]*?)\s*-->/g
 
@@ -24,6 +25,40 @@ export function branchForRelease(tag) {
     throw new Error(`release tag must look like vX.Y.Z, got ${tag}`)
   }
   return `${BRANCH_ROOT}/${tag}`
+}
+
+export function gitRefCreationRequest(repository, branch, baseHead) {
+  const {owner, name} = splitRepository(repository)
+  if (!/^automation\/bump-harn-formula\/v\d+\.\d+\.\d+$/.test(branch)) {
+    throw new Error(`formula branch has an invalid version-qualified name: ${branch}`)
+  }
+  if (!GIT_SHA.test(baseHead ?? "")) {
+    throw new Error("formula branch base must be an exact Git SHA")
+  }
+  return {
+    endpoint: `repos/${owner}/${name}/git/refs`,
+    payload: {ref: `refs/heads/${branch}`, sha: baseHead},
+  }
+}
+
+export function producerFailureReceipt({repository, workflowRunId, requestedVersion, error}) {
+  if (!Number.isSafeInteger(workflowRunId) || workflowRunId <= 0) {
+    throw new Error("failure receipt workflow run ID must be a positive integer")
+  }
+  splitRepository(repository)
+  if (!/^v\d+\.\d+\.\d+$/.test(requestedVersion)) {
+    throw new Error("failure receipt requested version must be an exact stable tag")
+  }
+  const message = String(error?.message ?? error ?? "").trim()
+  if (!message) throw new Error("failure receipt error message is missing")
+  return {
+    schema_version: PRODUCER_FAILURE_RECEIPT_SCHEMA,
+    state: "failed",
+    repository,
+    workflow_run_id: workflowRunId,
+    requested_version: requestedVersion,
+    error: {message},
+  }
 }
 
 export function sha256(value) {
@@ -887,14 +922,14 @@ export function liveGitHubAdapter() {
       }
     },
 
-    async createBranch({repositoryId, branch, baseHead}) {
-      const data = await graphql(
-        "mutation($input: CreateRefInput!) { createRef(input: $input) { ref { name target { oid } } } }",
-        {input: {repositoryId, name: `refs/heads/${branch}`, oid: baseHead}},
+    async createBranch({repository, branch, baseHead}) {
+      const request = gitRefCreationRequest(repository, branch, baseHead)
+      const created = await gh(
+        ["api", "--method", "POST", request.endpoint, "--input", "-"],
+        request.payload,
       )
-      const created = data.createRef?.ref
-      if (created?.target?.oid !== baseHead) {
-        throw new Error(`createRef returned an unexpected head for ${branch}`)
+      if (created?.ref !== request.payload.ref || created?.object?.sha !== baseHead) {
+        throw new Error(`Git ref creation returned an unexpected head for ${branch}`)
       }
     },
 
@@ -964,28 +999,39 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
-  const release = JSON.parse(readFileSync(args.releaseJson, "utf8"))
-  const manifest = harnReleaseManifest(release)
-  if (manifest.release_tag !== args.version) {
-    throw new Error(
-      `release payload tag ${manifest.release_tag} does not match requested ${args.version}`,
-    )
-  }
   const workflowRunId = Number(process.env.GITHUB_RUN_ID)
-  const receipt = await publishHarnFormula({
-    manifest,
-    workflowRunId,
-    adapter: liveGitHubAdapter(),
-    repository: args.repository,
-  })
-  writeFileSync(args.receipt, `${JSON.stringify(receipt, null, 2)}\n`, {mode: 0o600})
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(
-      process.env.GITHUB_STEP_SUMMARY,
-      `Formula producer: ${receipt.state}; ${receipt.branch}@${receipt.head_sha}; checks ${receipt.checks.total_count} total, ${receipt.checks.pending_count} pending, ${receipt.checks.failing_count} failing.\n`,
-    )
+  try {
+    const release = JSON.parse(readFileSync(args.releaseJson, "utf8"))
+    const manifest = harnReleaseManifest(release)
+    if (manifest.release_tag !== args.version) {
+      throw new Error(
+        `release payload tag ${manifest.release_tag} does not match requested ${args.version}`,
+      )
+    }
+    const receipt = await publishHarnFormula({
+      manifest,
+      workflowRunId,
+      adapter: liveGitHubAdapter(),
+      repository: args.repository,
+    })
+    writeFileSync(args.receipt, `${JSON.stringify(receipt, null, 2)}\n`, {mode: 0o600})
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      appendFileSync(
+        process.env.GITHUB_STEP_SUMMARY,
+        `Formula producer: ${receipt.state}; ${receipt.branch}@${receipt.head_sha}; checks ${receipt.checks.total_count} total, ${receipt.checks.pending_count} pending, ${receipt.checks.failing_count} failing.\n`,
+      )
+    }
+    process.stdout.write(`publish-harn-formula: ${receipt.state} ${receipt.head_sha}\n`)
+  } catch (error) {
+    const failure = producerFailureReceipt({
+      repository: args.repository,
+      workflowRunId,
+      requestedVersion: args.version,
+      error,
+    })
+    writeFileSync(args.receipt, `${JSON.stringify(failure, null, 2)}\n`, {mode: 0o600})
+    throw error
   }
-  process.stdout.write(`publish-harn-formula: ${receipt.state} ${receipt.head_sha}\n`)
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
