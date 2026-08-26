@@ -36,6 +36,10 @@ jobs:
           owner: burin-labs
           permission-contents: write
           permission-pull-requests: write
+          # Creating a branch from main also carries the checked-in workflow
+          # tree. GitHub therefore requires the App's existing Workflows write
+          # permission even though the producer changes only Formula/harn.rb.
+          permission-workflows: write
 
       - name: Checkout with publishing identity
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

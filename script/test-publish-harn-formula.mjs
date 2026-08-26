@@ -425,6 +425,9 @@ await test("workflow establishes the App identity before checkout and has no for
   const checkoutStep = workflow.indexOf("name: Checkout with publishing identity")
   assert(tokenStep >= 0 && checkoutStep > tokenStep)
   assert.match(workflow, /token: \$\{\{ steps\.app-token\.outputs\.token \}\}/)
+  assert.match(workflow, /permission-contents: write/)
+  assert.match(workflow, /permission-pull-requests: write/)
+  assert.match(workflow, /permission-workflows: write/)
   assert.match(workflow, /version:\n\s+description:[^\n]+\n\s+required: true\n\s+type: string/)
   assert.match(
     workflow,
