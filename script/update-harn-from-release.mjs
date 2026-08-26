@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { pathToFileURL, URL } from "node:url"
 
-const TARGETS = [
+export const HARN_RELEASE_ASSETS = [
   "harn-aarch64-apple-darwin.tar.gz",
   "harn-x86_64-apple-darwin.tar.gz",
   "harn-aarch64-unknown-linux-gnu.tar.gz",
@@ -12,8 +12,71 @@ const TARGETS = [
 
 export function updateHarnFromRelease(path) {
   const release = JSON.parse(readFileSync(path, "utf-8"))
-  const formula = renderHarnFormula(parseRelease(release))
+  const formula = renderHarnFormula(harnReleaseManifest(release))
   write("Formula/harn.rb", formula)
+}
+
+/**
+ * Project GitHub's release payload into the one manifest the formula consumes.
+ * Other release assets are deliberately ignored, but this projection itself
+ * must contain each supported Homebrew archive exactly once.
+ */
+export function harnReleaseManifest(release) {
+  const tag = requireString(release.tagName ?? release.tag_name, "tagName")
+  if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
+    throw new Error(`Harn release tag must look like vX.Y.Z, got ${tag}`)
+  }
+  const rawAssets = release.assets
+  if (!Array.isArray(rawAssets)) {
+    throw new Error("Harn release JSON must include an assets array")
+  }
+  return validateHarnReleaseManifest({
+    schema_version: 1,
+    release_tag: tag,
+    assets: HARN_RELEASE_ASSETS.map((name) => parseAsset(rawAssets, tag, name)),
+  })
+}
+
+export function validateHarnReleaseManifest(manifest) {
+  if (manifest?.schema_version !== 1) {
+    throw new Error("Harn release manifest schema_version must be 1")
+  }
+  const tag = requireString(manifest.release_tag, "release_tag")
+  if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
+    throw new Error(`Harn release tag must look like vX.Y.Z, got ${tag}`)
+  }
+  if (!Array.isArray(manifest.assets) || manifest.assets.length !== HARN_RELEASE_ASSETS.length) {
+    throw new Error(
+      `Harn release manifest must contain exactly ${HARN_RELEASE_ASSETS.length} supported assets`,
+    )
+  }
+  const byName = new Map()
+  for (const asset of manifest.assets) {
+    const name = requireString(asset?.name, "assets.name")
+    if (!HARN_RELEASE_ASSETS.includes(name)) {
+      throw new Error(`Harn release manifest contains unsupported asset ${name}`)
+    }
+    if (byName.has(name)) {
+      throw new Error(`Harn release manifest contains duplicate asset ${name}`)
+    }
+    byName.set(name, {
+      name,
+      sha256: requireSha256(asset.sha256, `assets.${name}.sha256`),
+      url: requireHarnAssetUrl(asset.url, `assets.${name}.url`, tag, name),
+    })
+  }
+  for (const name of HARN_RELEASE_ASSETS) {
+    if (!byName.has(name)) {
+      throw new Error(`Harn release ${tag} is missing asset ${name}`)
+    }
+  }
+  return {
+    schema_version: 1,
+    release_tag: tag,
+    version: tag.slice(1),
+    tag,
+    assets: HARN_RELEASE_ASSETS.map((name) => byName.get(name)),
+  }
 }
 
 export function renderHarnFormula({ version, tag, assets }) {
@@ -84,19 +147,6 @@ end
 
 function versionedUrl(url, tag) {
   return url.replace(`/releases/download/${tag}/`, "/releases/download/v#{version}/")
-}
-
-function parseRelease(release) {
-  const tag = requireString(release.tagName ?? release.tag_name, "tagName")
-  if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
-    throw new Error(`Harn release tag must look like vX.Y.Z, got ${tag}`)
-  }
-  const rawAssets = release.assets
-  if (!Array.isArray(rawAssets)) {
-    throw new Error("Harn release JSON must include an assets array")
-  }
-  const assets = TARGETS.map((asset) => parseAsset(rawAssets, tag, asset))
-  return { version: tag.slice(1), tag, assets }
 }
 
 function parseAsset(rawAssets, tag, name) {
@@ -185,7 +235,7 @@ async function main() {
   updateHarnFromRelease(args.releaseJson)
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
     process.stderr.write(`update-harn-from-release: ${error.message}\n`)
     process.exit(1)

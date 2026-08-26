@@ -26,6 +26,7 @@ jobs:
         run: |
           node script/test-update-from-release.mjs
           node script/test-update-harn-from-release.mjs
+          node script/test-publish-harn-formula.mjs
       - name: Install Homebrew on Linux
         if: runner.os == 'Linux'
         run: |

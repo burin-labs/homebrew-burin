@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { updateHarnFromRelease } from "./update-harn-from-release.mjs"
+import { harnReleaseManifest, updateHarnFromRelease } from "./update-harn-from-release.mjs"
 
 const root = mkdtempSync(join(tmpdir(), "burin-homebrew-harn-test-"))
 const originalCwd = process.cwd()
@@ -13,6 +13,15 @@ try {
   process.chdir(root)
   const releasePath = join(root, "harn-release.json")
   writeFileSync(releasePath, `${JSON.stringify(releaseFixture())}\n`)
+
+  const manifest = harnReleaseManifest(releaseFixture())
+  assert.equal(manifest.assets.length, 4)
+  assert.deepEqual(manifest.assets.map((asset) => asset.name), [
+    "harn-aarch64-apple-darwin.tar.gz",
+    "harn-x86_64-apple-darwin.tar.gz",
+    "harn-aarch64-unknown-linux-gnu.tar.gz",
+    "harn-x86_64-unknown-linux-gnu.tar.gz",
+  ])
 
   updateHarnFromRelease(releasePath)
 
