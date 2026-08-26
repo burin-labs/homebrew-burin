@@ -32,16 +32,22 @@ let tests = 0
 
 async function main() {
 await test("live branch creation uses the Git refs API with exact identity", async () => {
+  assert.equal(branchForRelease("v1.2.3"), "automation/harn-formula-v1.2.3")
+  assert.notEqual(
+    branchForRelease("v1.2.3").startsWith("automation/bump-harn-formula/"),
+    true,
+    "version branches must not be descendants of the legacy producer branch",
+  )
   assert.deepEqual(
     gitRefCreationRequest(
       "burin-labs/homebrew-burin",
-      "automation/bump-harn-formula/v1.2.3",
+      "automation/harn-formula-v1.2.3",
       BASE_HEAD,
     ),
     {
       endpoint: "repos/burin-labs/homebrew-burin/git/refs",
       payload: {
-        ref: "refs/heads/automation/bump-harn-formula/v1.2.3",
+        ref: "refs/heads/automation/harn-formula-v1.2.3",
         sha: BASE_HEAD,
       },
     },
@@ -51,7 +57,7 @@ await test("live branch creation uses the Git refs API with exact identity", asy
     /invalid version-qualified name/,
   )
   assert.throws(
-    () => gitRefCreationRequest("burin-labs/homebrew-burin", "automation/bump-harn-formula/v1.2.3", ""),
+    () => gitRefCreationRequest("burin-labs/homebrew-burin", "automation/harn-formula-v1.2.3", ""),
     /exact Git SHA/,
   )
 })
@@ -92,14 +98,14 @@ await test("positive control publishes and proves one exact GitHub-signed head",
   assert.equal(receipt.workflow_run_id, 4242)
   assert.equal(receipt.base_branch, "main")
   assert.equal(receipt.base_head_sha, BASE_HEAD)
-  assert.equal(receipt.branch, "automation/bump-harn-formula/v1.2.3")
+  assert.equal(receipt.branch, "automation/harn-formula-v1.2.3")
   assert.equal(receipt.head_sha, SIGNED_HEAD)
   assert.deepEqual(receipt.pull_request, {
     number: 73,
     url: "https://github.com/burin-labs/homebrew-burin/pull/73",
     base_ref: "main",
     base_sha: BASE_HEAD,
-    head_ref: "automation/bump-harn-formula/v1.2.3",
+    head_ref: "automation/harn-formula-v1.2.3",
     head_sha: SIGNED_HEAD,
     is_draft: false,
   })
@@ -228,7 +234,7 @@ await test("stale exact-head lease fails by name", async () => {
 await test("wrong branch observation fails by name", async () => {
   const manifest = fixtureManifest()
   const adapter = new FakeAdapter(manifest)
-  adapter.wrongBranchName = "automation/bump-harn-formula/v9.9.9"
+  adapter.wrongBranchName = "automation/harn-formula-v9.9.9"
   await rejectsNamed(
     publishHarnFormula({manifest, workflowRunId: 3, adapter}),
     /wrong branch observed/,
