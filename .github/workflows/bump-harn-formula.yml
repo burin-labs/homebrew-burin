@@ -1,22 +1,14 @@
 name: Bump Harn Formula
 
-# Every `harn` formula bump in this tap's history was hand-authored, one per
-# Harn release, at a release cadence of roughly a day. That is the last
-# un-automated step in the chain that carries a Harn release out to users, and
-# a tap that lags ships known-buggy binaries to whoever installed it.
-#
-# This opens a pull request rather than pushing to main: until launch, a human
-# eyeball stays on what the tap advertises, and the tap's own CI (formula
-# style, audit, and an install smoke test) has to pass first. The App token is
-# what makes that CI run at all — a pull request opened with GITHUB_TOKEN does
-# not trigger workflows, which would leave the bump unverified and silent.
+# Harn Fleet dispatches this repository-owned producer for each release. The
+# daily schedule is only a recovery alarm for a missed dispatch.
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Optional exact Harn tag (vX.Y.Z). Defaults to the latest release."
-        required: false
+        description: "Exact Harn release tag (vX.Y.Z); the recovery schedule resolves latest."
+        required: true
         type: string
   schedule:
     - cron: "17 12 * * *"
@@ -28,14 +20,13 @@ concurrency:
   group: bump-harn-formula
   cancel-in-progress: false
 
-env:
-  BUMP_BRANCH: automation/bump-harn-formula
-
 jobs:
   bump:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # Establish the publishing identity before checkout so persisted checkout
+      # credentials cannot supersede the App that owns the server-side commit.
       - name: Mint GitHub App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -46,7 +37,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Checkout
+      - name: Checkout with publishing identity
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.app-token.outputs.token }}
@@ -72,65 +63,36 @@ jobs:
             exit 1
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      # The generator reads GitHub's own release payload and takes each
-      # archive's sha256 from the asset `digest` field that GitHub publishes.
-      # It refuses a release missing any of the four supported targets, so a
-      # partially-uploaded release cannot render a formula that half works.
-      - name: Regenerate the formula from the release
+      - name: Fetch the authoritative release payload
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ steps.target.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/burin-labs/harn/releases/tags/${TAG}" > /tmp/harn-release.json
-          node script/update-harn-from-release.mjs --release-json /tmp/harn-release.json
+          gh api "repos/burin-labs/harn/releases/tags/${TAG}" > "${RUNNER_TEMP}/harn-release.json"
 
-      - name: Decide whether anything changed
-        id: diff
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- Formula/harn.rb; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Formula already at ${{ steps.target.outputs.tag }}; nothing to open." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      # One stable branch carries whatever the newest target is. A superseded
-      # proposal is replaced rather than accumulating a pull request per
-      # release that someone then has to close by hand.
-      - name: Propose the bump
-        if: steps.diff.outputs.changed == 'true'
+      # The producer downloads all four macOS/Linux archives, compares their
+      # SHA-256 values to one validated manifest, then uses GitHub's
+      # createCommitOnBranch mutation under an exact observed-head lease. It
+      # refuses moved or armed heads and verifies the returned head is signed
+      # by GitHub before opening a non-draft PR.
+      - name: Publish signed version-qualified formula update
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ steps.target.outputs.tag }}
-          VERSION: ${{ steps.target.outputs.version }}
-        shell: bash
         run: |
-          set -euo pipefail
-          git config user.name "harn-release-bot[bot]"
-          git config user.email "harn-release-bot[bot]@users.noreply.github.com"
-          git checkout -b "${BUMP_BRANCH}"
-          git add Formula/harn.rb
-          git commit -m "chore: update Harn formula to ${VERSION}"
-          git push --force-with-lease origin "${BUMP_BRANCH}"
+          node script/publish-harn-formula.mjs \
+            --release-json "${RUNNER_TEMP}/harn-release.json" \
+            --version "${TAG}" \
+            --receipt "${RUNNER_TEMP}/harn-formula-receipt.json"
 
-          BODY="Regenerated \`Formula/harn.rb\` from the published \`${TAG}\` release.
-
-          Checksums come from the \`digest\` field GitHub publishes on each release asset, so they describe the archives users will actually download.
-
-          Opened automatically by \`.github/workflows/bump-harn-formula.yml\`. The tap's own CI gates it: formula style, audit, and an install smoke test on macOS and Linux."
-
-          EXISTING="$(gh pr list --head "${BUMP_BRANCH}" --state open --json number --jq '.[0].number // ""')"
-          if [ -n "${EXISTING}" ]; then
-            gh pr edit "${EXISTING}" --title "chore: update Harn formula to ${VERSION}" --body "${BODY}"
-            echo "Refreshed existing pull request #${EXISTING} to ${TAG}." >> "$GITHUB_STEP_SUMMARY"
-          else
-            gh pr create --base main --head "${BUMP_BRANCH}" \
-              --title "chore: update Harn formula to ${VERSION}" --body "${BODY}"
-            echo "Opened a pull request for ${TAG}." >> "$GITHUB_STEP_SUMMARY"
-          fi
+      - name: Upload typed producer receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: harn-formula-receipt-${{ github.run_id }}
+          path: ${{ runner.temp }}/harn-formula-receipt.json
+          if-no-files-found: error
+          retention-days: 30

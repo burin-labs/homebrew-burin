@@ -41,12 +41,15 @@ gh release view --repo burin-labs/harn --json tagName,assets \
 node script/update-harn-from-release.mjs --release-json /tmp/harn-release.json
 ```
 
-You should not normally need to run that by hand. `.github/workflows/bump-harn-formula.yml`
-runs daily, regenerates `Formula/harn.rb` from the newest published Harn
-release, and opens a pull request when the formula has fallen behind. It opens
-a pull request rather than pushing, so the tap's CI gates every bump and a
-human still approves what the tap advertises. Dispatch it manually with an
-optional exact tag to pull a specific release forward.
+You should not normally need to run that by hand. Harn Fleet dispatches
+`.github/workflows/bump-harn-formula.yml` with an exact release tag; the daily
+schedule is a recovery alarm if that release dispatch is missed. The producer
+downloads and SHA-256 verifies exactly the four supported macOS/Linux archives,
+publishes a GitHub-signed commit to
+`automation/bump-harn-formula/vX.Y.Z` under an exact-head lease, and opens an
+unarmed pull request for tap CI. Each successful run uploads a typed lifecycle
+receipt that records the release, assets, formula hash, exact branch and head,
+pull request, observed checks, and eventual merge fields.
 
 CI always runs `brew style`, `brew audit`, and the generator fixture tests.
 Install smoke runs when the referenced release assets are publicly reachable.
