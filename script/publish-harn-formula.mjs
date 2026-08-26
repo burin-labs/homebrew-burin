@@ -5,6 +5,7 @@ import { spawn } from "node:child_process"
 import { pathToFileURL } from "node:url"
 
 import {
+  HARN_RELEASE_ASSETS,
   harnReleaseManifest,
   renderHarnFormula,
   validateHarnReleaseManifest,
@@ -13,6 +14,10 @@ import {
 const FORMULA_PATH = "Formula/harn.rb"
 const BRANCH_ROOT = "automation/bump-harn-formula"
 const SHA256 = /^[0-9a-f]{64}$/
+const GIT_SHA = /^[0-9a-f]{40}$/
+const PRODUCER_RECEIPT_SCHEMA = "homebrew_burin.harn_formula_producer.v2"
+const PRODUCER_RUN_MARKER_NAME = "harn-formula-producer-run"
+const PRODUCER_RUN_MARKER = /<!--\s*harn-formula-producer-run\s*:\s*([^]*?)\s*-->/g
 
 export function branchForRelease(tag) {
   if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
@@ -25,17 +30,43 @@ export function sha256(value) {
   return createHash("sha256").update(value).digest("hex")
 }
 
-export function checkSummary(contexts) {
+function normalizedCheckContexts(contexts) {
   if (!Array.isArray(contexts) || contexts.length === 0) {
     throw new Error("missing PR check observations")
   }
+  const seen = new Set()
+  const normalized = contexts.map((context) => {
+    const name = String(context?.name ?? "").trim()
+    if (!name) throw new Error("PR check observation is missing its name")
+    const key = name.toLowerCase()
+    if (seen.has(key)) throw new Error(`duplicate PR check observation ${name}`)
+    seen.add(key)
+    if (context.kind === "check_run") {
+      const status = String(context.status ?? "").trim()
+      if (!status) throw new Error(`PR check ${name} is missing its status`)
+      const conclusion = context.conclusion === null || context.conclusion === undefined
+        ? null
+        : String(context.conclusion).trim()
+      if (conclusion === "") throw new Error(`PR check ${name} has an empty conclusion`)
+      return {kind: "check_run", name, status, conclusion}
+    }
+    if (context.kind === "status_context") {
+      const state = String(context.state ?? "").trim()
+      if (!state) throw new Error(`PR status ${name} is missing its state`)
+      return {kind: "status_context", name, state}
+    }
+    throw new Error(`PR check ${name} has unknown kind`)
+  })
+  return normalized.sort((left, right) => (
+    left.name.localeCompare(right.name) || left.kind.localeCompare(right.kind)
+  ))
+}
+
+function summaryForNormalizedChecks(contexts) {
   const failingNames = []
   let pendingCount = 0
   for (const context of contexts) {
-    const name = String(context?.name ?? "").trim()
-    if (!name) {
-      throw new Error("PR check observation is missing its name")
-    }
+    const {name} = context
     if (context.kind === "check_run") {
       if (context.status !== "COMPLETED") {
         pendingCount += 1
@@ -48,8 +79,6 @@ export function checkSummary(contexts) {
       } else if (context.state !== "SUCCESS") {
         failingNames.push(name)
       }
-    } else {
-      throw new Error(`PR check ${name} has unknown kind`)
     }
   }
   return {
@@ -59,6 +88,67 @@ export function checkSummary(contexts) {
     failing_count: failingNames.length,
     failing_names: failingNames.sort(),
   }
+}
+
+export function checkSummary(contexts) {
+  return summaryForNormalizedChecks(normalizedCheckContexts(contexts))
+}
+
+export function checkInventory(contexts, headSha) {
+  if (!GIT_SHA.test(headSha ?? "")) {
+    throw new Error("PR check inventory is missing its exact head SHA")
+  }
+  const normalized = normalizedCheckContexts(contexts)
+  return {
+    ...summaryForNormalizedChecks(normalized),
+    head_sha: headSha,
+    contexts: normalized,
+  }
+}
+
+function producerRunMarker(workflowRunId) {
+  if (!Number.isSafeInteger(workflowRunId) || workflowRunId <= 0) {
+    throw new Error("producer workflow run ID must be a positive integer")
+  }
+  return `<!-- ${PRODUCER_RUN_MARKER_NAME}: ${workflowRunId} -->`
+}
+
+function producerRunMarkerMatches(body) {
+  PRODUCER_RUN_MARKER.lastIndex = 0
+  return [...String(body ?? "").matchAll(PRODUCER_RUN_MARKER)]
+}
+
+export function producerRunIdFromBody(body) {
+  const source = String(body ?? "")
+  const matches = producerRunMarkerMatches(source)
+  if (matches.length !== 1) {
+    throw new Error(`pull request must contain exactly one ${PRODUCER_RUN_MARKER_NAME} marker`)
+  }
+  if (!/^[1-9]\d*$/.test(matches[0][1].trim())) {
+    throw new Error(`${PRODUCER_RUN_MARKER_NAME} marker must contain a positive integer`)
+  }
+  const runId = Number(matches[0][1].trim())
+  if (!Number.isSafeInteger(runId)) {
+    throw new Error(`${PRODUCER_RUN_MARKER_NAME} marker exceeds the safe integer range`)
+  }
+  return runId
+}
+
+export function upsertProducerRunMarker(body, workflowRunId) {
+  const source = String(body ?? "")
+  const marker = producerRunMarker(workflowRunId)
+  const matches = producerRunMarkerMatches(source)
+  if (matches.length > 1) {
+    throw new Error(`pull request contains duplicate ${PRODUCER_RUN_MARKER_NAME} markers`)
+  }
+  if (matches.length === 1) {
+    producerRunIdFromBody(source)
+    return source.replace(matches[0][0], marker)
+  }
+  if (source.includes(PRODUCER_RUN_MARKER_NAME)) {
+    throw new Error(`pull request contains a malformed ${PRODUCER_RUN_MARKER_NAME} marker`)
+  }
+  return `${source.trimEnd()}\n\n${marker}\n`
 }
 
 function exactPullRequest(observation, headSha) {
@@ -96,6 +186,53 @@ function assertExactSignedHead(observation, branch, headSha, formulaSha256) {
   const signature = observation.branch.signature
   if (!signature?.is_valid || !signature?.was_signed_by_github) {
     throw new Error(`published head ${headSha} is not GitHub server-signed`)
+  }
+  if (!String(signature.state ?? "").trim()) {
+    throw new Error(`published head ${headSha} signature state is missing`)
+  }
+  return {
+    head_sha: headSha,
+    is_valid: true,
+    was_signed_by_github: true,
+    state: String(signature.state).trim(),
+  }
+}
+
+function assertExactPullRequestIdentity({
+  pull,
+  repository,
+  baseBranch,
+  baseHead,
+  branch,
+  headSha,
+}) {
+  if (!Number.isSafeInteger(pull?.number) || pull.number <= 0) {
+    throw new Error("producer pull request number is missing")
+  }
+  if (pull.url !== `https://github.com/${repository}/pull/${pull.number}`) {
+    throw new Error(`producer pull request #${pull.number} URL does not match its repository`)
+  }
+  if (
+    pull.base_ref !== baseBranch
+    || !GIT_SHA.test(pull.base_sha ?? "")
+    || pull.base_sha !== baseHead
+  ) {
+    throw new Error(`producer pull request #${pull.number} base identity does not match`)
+  }
+  if (pull.head_ref !== branch || pull.head_sha !== headSha) {
+    throw new Error(`producer pull request #${pull.number} head identity does not match`)
+  }
+  if (pull.is_draft) {
+    throw new Error(`producer pull request #${pull.number} is draft; expected READY`)
+  }
+  return {
+    number: pull.number,
+    url: pull.url,
+    base_ref: pull.base_ref,
+    base_sha: baseHead,
+    head_ref: pull.head_ref,
+    head_sha: pull.head_sha,
+    is_draft: false,
   }
 }
 
@@ -141,27 +278,173 @@ async function assertExactProducerHead({
   headSha,
   formulaSha256,
 }) {
-  assertExactSignedHead(observation, branch, headSha, formulaSha256)
+  const signature = assertExactSignedHead(observation, branch, headSha, formulaSha256)
   const projection = await adapter.candidateProjection({repository, baseHead, headSha})
   assertExactFormulaProjection(projection, baseHead, headSha)
+  return signature
 }
 
-function receiptFor({ manifest, formulaSha256, workflowRunId, branch, headSha, pull, checks }) {
-  return {
-    schema_version: 1,
+function equalJson(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function requireReceiptSha(value, field) {
+  if (!GIT_SHA.test(value ?? "")) throw new Error(`${field} must be an exact Git SHA`)
+}
+
+function requireReceiptSha256(value, field) {
+  if (!SHA256.test(value ?? "")) throw new Error(`${field} must be a SHA-256 digest`)
+}
+
+/** Closed producer boundary used for both artifact assembly and mutation controls. */
+export function validateProducerReceiptV2(receipt, expected) {
+  if (receipt?.schema_version !== PRODUCER_RECEIPT_SCHEMA) {
+    throw new Error(`producer receipt schema_version must be ${PRODUCER_RECEIPT_SCHEMA}`)
+  }
+  if (receipt.repository !== expected.repository) throw new Error("producer receipt repository mismatch")
+  if (receipt.workflow_run_id !== expected.workflowRunId) {
+    throw new Error("producer receipt workflow run mismatch")
+  }
+  if (receipt.release_tag !== expected.manifest.release_tag) {
+    throw new Error("producer receipt release tag mismatch")
+  }
+  if (receipt.formula_path !== FORMULA_PATH) throw new Error("producer receipt formula path mismatch")
+  requireReceiptSha256(receipt.formula_sha256, "producer receipt formula_sha256")
+  if (receipt.formula_sha256 !== expected.formulaSha256) {
+    throw new Error("producer receipt formula digest mismatch")
+  }
+  if (receipt.base_branch !== expected.baseBranch) throw new Error("producer receipt base branch mismatch")
+  requireReceiptSha(receipt.base_head_sha, "producer receipt base_head_sha")
+  if (receipt.base_head_sha !== expected.baseHead) {
+    throw new Error("producer receipt base head mismatch")
+  }
+  if (receipt.branch !== branchForRelease(expected.manifest.release_tag)) {
+    throw new Error("producer receipt candidate branch mismatch")
+  }
+  if (!Array.isArray(receipt.assets) || receipt.assets.length !== HARN_RELEASE_ASSETS.length) {
+    throw new Error(`producer receipt must contain exactly ${HARN_RELEASE_ASSETS.length} assets`)
+  }
+  const expectedAssets = expected.manifest.assets.map(({name, sha256: digest}) => ({name, sha256: digest}))
+  for (const asset of receipt.assets) requireReceiptSha256(asset?.sha256, `asset ${asset?.name ?? ""}`)
+  if (!equalJson(receipt.assets, expectedAssets)) throw new Error("producer receipt asset identity mismatch")
+
+  if (receipt.state === "already_published") {
+    if (receipt.head_sha !== receipt.base_head_sha) {
+      throw new Error("already-published producer receipt head does not match main")
+    }
+    if (receipt.pull_request !== null || receipt.signature !== null) {
+      throw new Error("already-published producer receipt unexpectedly contains candidate identity")
+    }
+    const emptyChecks = {
+      observation_state: "not_applicable",
+      total_count: 0,
+      pending_count: 0,
+      failing_count: 0,
+      failing_names: [],
+      head_sha: receipt.head_sha,
+      contexts: [],
+    }
+    if (!equalJson(receipt.checks, emptyChecks)) {
+      throw new Error("already-published producer receipt check inventory mismatch")
+    }
+    if (
+      receipt.merge_commit_sha !== receipt.base_head_sha ||
+      receipt.post_merge_formula_sha256 !== receipt.formula_sha256
+    ) {
+      throw new Error("already-published producer receipt publication identity mismatch")
+    }
+    return receipt
+  }
+  if (!["pull_request_open", "merged"].includes(receipt.state)) {
+    throw new Error(`producer receipt has unknown state ${receipt.state}`)
+  }
+  requireReceiptSha(receipt.head_sha, "producer receipt head_sha")
+  const pull = receipt.pull_request
+  if (
+    !Number.isSafeInteger(pull?.number) ||
+    pull.number <= 0 ||
+    pull?.base_ref !== receipt.base_branch ||
+    pull?.base_sha !== receipt.base_head_sha ||
+    pull?.head_ref !== receipt.branch ||
+    pull?.head_sha !== receipt.head_sha ||
+    pull?.is_draft !== false ||
+    pull?.url !== `https://github.com/${receipt.repository}/pull/${pull?.number}`
+  ) {
+    throw new Error("producer receipt pull request identity mismatch")
+  }
+  if (
+    receipt.signature?.head_sha !== receipt.head_sha ||
+    receipt.signature?.is_valid !== true ||
+    receipt.signature?.was_signed_by_github !== true ||
+    !String(receipt.signature?.state ?? "").trim()
+  ) {
+    throw new Error("producer receipt signature identity mismatch")
+  }
+  const rebuiltChecks = checkInventory(receipt.checks?.contexts, receipt.head_sha)
+  if (!equalJson(receipt.checks, rebuiltChecks)) {
+    throw new Error("producer receipt check inventory mismatch")
+  }
+  if (receipt.state === "merged") {
+    requireReceiptSha(receipt.merge_commit_sha, "producer receipt merge_commit_sha")
+    if (receipt.post_merge_formula_sha256 !== receipt.formula_sha256) {
+      throw new Error("producer receipt post-merge formula digest mismatch")
+    }
+  } else if (receipt.merge_commit_sha !== null || receipt.post_merge_formula_sha256 !== null) {
+    throw new Error("open producer receipt unexpectedly contains merge identity")
+  }
+  return receipt
+}
+
+function receiptFor({
+  manifest,
+  formulaSha256,
+  workflowRunId,
+  repository,
+  baseBranch,
+  baseHead,
+  branch,
+  headSha,
+  signature,
+  pull,
+}) {
+  const pullRequest = assertExactPullRequestIdentity({
+    pull,
+    repository,
+    baseBranch,
+    baseHead,
+    branch,
+    headSha,
+  })
+  if (producerRunIdFromBody(pull.body) !== workflowRunId) {
+    throw new Error(`producer pull request #${pull.number} run marker mismatch`)
+  }
+  const receipt = {
+    schema_version: PRODUCER_RECEIPT_SCHEMA,
     state: pull?.merged ? "merged" : "pull_request_open",
+    repository,
+    workflow_run_id: workflowRunId,
     release_tag: manifest.release_tag,
     assets: manifest.assets.map(({ name, sha256: digest }) => ({name, sha256: digest})),
+    formula_path: FORMULA_PATH,
     formula_sha256: formulaSha256,
-    workflow_run_id: workflowRunId,
+    base_branch: baseBranch,
+    base_head_sha: baseHead,
     branch,
     head_sha: headSha,
-    pull_request_number: pull.number,
-    pull_request_url: pull.url,
-    checks,
+    pull_request: pullRequest,
+    signature,
+    checks: checkInventory(pull.check_contexts, headSha),
     merge_commit_sha: pull.merge_commit_sha ?? null,
     post_merge_formula_sha256: pull.post_merge_formula_sha256 ?? null,
   }
+  return validateProducerReceiptV2(receipt, {
+    repository,
+    workflowRunId,
+    manifest,
+    formulaSha256,
+    baseBranch,
+    baseHead,
+  })
 }
 
 async function verifyAssets(manifest, adapter) {
@@ -182,6 +465,30 @@ async function verifyAssets(manifest, adapter) {
       )
     }
   }
+}
+
+function pullRequestBody(manifest, workflowRunId) {
+  return [
+    `Regenerated \`${FORMULA_PATH}\` from the published \`${manifest.release_tag}\` release.`,
+    "",
+    "The producer downloaded and SHA-256 verified all four supported macOS/Linux archives before publishing this GitHub-signed exact-head commit.",
+    "",
+    "Opened by `.github/workflows/bump-harn-formula.yml`; this pull request remains unarmed for Fleet or a person to evaluate.",
+    "",
+    producerRunMarker(workflowRunId),
+  ].join("\n")
+}
+
+async function ensureProducerRunMarker(adapter, pull, workflowRunId) {
+  const current = String(pull?.body ?? "")
+  const next = upsertProducerRunMarker(current, workflowRunId)
+  if (next !== current) {
+    if (!String(pull?.id ?? "").trim()) {
+      throw new Error(`producer pull request #${pull?.number ?? "unknown"} node identity is missing`)
+    }
+    await adapter.updatePullRequestBody({pullRequestId: pull.id, body: next})
+  }
+  return next
 }
 
 export async function publishHarnFormula({
@@ -215,41 +522,79 @@ export async function publishHarnFormula({
     const publishedHead = observation.branch?.head_sha
     const mergedPull = publishedHead ? exactPullRequest(observation, publishedHead) : null
     if (mergedPull?.merged) {
-      assertExactSignedHead(observation, branch, publishedHead, formulaSha256)
+      const producerBaseHead = mergedPull.base_sha
+      if (!GIT_SHA.test(producerBaseHead ?? "")) {
+        throw new Error(`producer pull request #${mergedPull.number} base identity does not match`)
+      }
+      const signature = await assertExactProducerHead({
+        observation,
+        adapter,
+        repository,
+        branch,
+        baseHead: producerBaseHead,
+        headSha: publishedHead,
+        formulaSha256,
+      })
       if (mergedPull.post_merge_formula_sha256 !== formulaSha256) {
         throw new Error(`merged pull request #${mergedPull.number} formula digest mismatch`)
       }
+      assertExactPullRequestIdentity({
+        pull: mergedPull,
+        repository,
+        baseBranch,
+        baseHead: producerBaseHead,
+        branch,
+        headSha: publishedHead,
+      })
+      mergedPull.body = await ensureProducerRunMarker(adapter, mergedPull, workflowRunId)
       return receiptFor({
         manifest,
         formulaSha256,
         workflowRunId,
+        repository,
+        baseBranch,
+        baseHead: producerBaseHead,
         branch,
         headSha: publishedHead,
+        signature,
         pull: mergedPull,
-        checks: checkSummary(mergedPull.check_contexts),
       })
     }
-    return {
-      schema_version: 1,
+    const receipt = {
+      schema_version: PRODUCER_RECEIPT_SCHEMA,
       state: "already_published",
+      repository,
+      workflow_run_id: workflowRunId,
       release_tag: manifest.release_tag,
       assets: manifest.assets.map(({ name, sha256: digest }) => ({name, sha256: digest})),
+      formula_path: FORMULA_PATH,
       formula_sha256: formulaSha256,
-      workflow_run_id: workflowRunId,
+      base_branch: baseBranch,
+      base_head_sha: baseHead,
       branch,
       head_sha: baseHead,
-      pull_request_number: null,
-      pull_request_url: null,
+      pull_request: null,
+      signature: null,
       checks: {
         observation_state: "not_applicable",
         total_count: 0,
         pending_count: 0,
         failing_count: 0,
         failing_names: [],
+        head_sha: baseHead,
+        contexts: [],
       },
       merge_commit_sha: baseHead,
       post_merge_formula_sha256: formulaSha256,
     }
+    return validateProducerReceiptV2(receipt, {
+      repository,
+      workflowRunId,
+      manifest,
+      formulaSha256,
+      baseBranch,
+      baseHead,
+    })
   }
 
   if (!observation.branch) {
@@ -307,13 +652,7 @@ export async function publishHarnFormula({
       baseBranch,
       branch,
       title: `chore: update Harn formula to ${manifest.version}`,
-      body: [
-        `Regenerated \`${FORMULA_PATH}\` from the published \`${manifest.release_tag}\` release.`,
-        "",
-        "The producer downloaded and SHA-256 verified all four supported macOS/Linux archives before publishing this GitHub-signed exact-head commit.",
-        "",
-        "Opened by `.github/workflows/bump-harn-formula.yml`; this pull request remains unarmed for Fleet or a person to evaluate.",
-      ].join("\n"),
+      body: pullRequestBody(manifest, workflowRunId),
     })
   }
 
@@ -333,14 +672,32 @@ export async function publishHarnFormula({
       if (attempt === checkAttempts) {
         throw new Error(`missing pull request observation for ${branch}@${headSha}`)
       }
-    } else if (pull.is_draft) {
-      throw new Error(`pull request #${pull.number} is draft; expected READY`)
     } else if (pull.check_contexts?.length > 0) {
-      const checks = checkSummary(pull.check_contexts)
+      const signature = assertExactSignedHead(observation, branch, headSha, formulaSha256)
+      assertExactPullRequestIdentity({
+        pull,
+        repository,
+        baseBranch,
+        baseHead,
+        branch,
+        headSha,
+      })
+      pull.body = await ensureProducerRunMarker(adapter, pull, workflowRunId)
       if (pull.merged && !pull.post_merge_formula_sha256) {
         throw new Error(`merged pull request #${pull.number} is missing post-merge formula observation`)
       }
-      return receiptFor({manifest, formulaSha256, workflowRunId, branch, headSha, pull, checks})
+      return receiptFor({
+        manifest,
+        formulaSha256,
+        workflowRunId,
+        repository,
+        baseBranch,
+        baseHead,
+        branch,
+        headSha,
+        signature,
+        pull,
+      })
     } else if (attempt === checkAttempts) {
       throw new Error(`missing PR check observations for pull request #${pull.number}`)
     }
@@ -378,7 +735,7 @@ query($owner: String!, $name: String!, $base: String!, $qualifiedBranch: String!
     }
     pullRequests(first: 20, states: [OPEN, MERGED, CLOSED], headRefName: $branch, baseRefName: $base, orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
-        number url state isDraft merged headRefOid
+        id number url body state isDraft merged baseRefName baseRefOid headRefName headRefOid
         autoMergeRequest { enabledAt }
         mergeQueueEntry { id }
         mergeCommit { oid formula: file(path: "${FORMULA_PATH}") { object { ... on Blob { text } } } }
@@ -486,11 +843,16 @@ export function liveGitHubAdapter() {
           } : null,
         } : null,
         pull_requests: repo.pullRequests.nodes.map((pull) => ({
+          id: pull.id,
           number: pull.number,
           url: pull.url,
+          body: pull.body,
           state: pull.state,
           is_draft: pull.isDraft,
           merged: pull.merged,
+          base_ref: pull.baseRefName,
+          base_sha: pull.baseRefOid,
+          head_ref: pull.headRefName,
           head_sha: pull.headRefOid,
           auto_merge_armed: pull.autoMergeRequest !== null,
           merge_queue_armed: pull.mergeQueueEntry !== null,
@@ -562,6 +924,19 @@ export function liveGitHubAdapter() {
       )
       if (!data.createPullRequest?.pullRequest?.number) {
         throw new Error(`pull request creation for ${branch} returned no pull request`)
+      }
+    },
+
+    async updatePullRequestBody({pullRequestId, body}) {
+      const data = await graphql(
+        "mutation($input: UpdatePullRequestInput!) { updatePullRequest(input: $input) { pullRequest { id body } } }",
+        {input: {pullRequestId, body}},
+      )
+      if (
+        data.updatePullRequest?.pullRequest?.id !== pullRequestId ||
+        data.updatePullRequest?.pullRequest?.body !== body
+      ) {
+        throw new Error("updatePullRequest did not preserve the exact producer run marker")
       }
     },
 
