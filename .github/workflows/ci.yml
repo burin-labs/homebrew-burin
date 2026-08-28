@@ -27,6 +27,7 @@ jobs:
           node script/test-update-from-release.mjs
           node script/test-update-harn-from-release.mjs
           node script/test-publish-harn-formula.mjs
+          node script/test-formula-url-preflight.mjs
       - name: Install Homebrew on Linux
         if: runner.os == 'Linux'
         run: |
@@ -61,14 +62,18 @@ jobs:
       - name: Formula install smoke
         run: |
           set -euo pipefail
-          # shellcheck disable=SC2016
-          URL="$(ruby -ne 'puts $1 if /^\s*url "([^"]+)"/ =~ $_' Formula/burin.rb | head -1)"
-          if [ -n "${URL}" ] && curl -fsIL "${URL}" >/dev/null; then
-            brew install burin-labs/burin/burin
-            brew test burin-labs/burin/burin
-          else
-            echo "Skipping formula install smoke because no stable formula URL is publicly reachable yet."
+          # Head-only (no `url`) and an unreachable `url` are different
+          # failures. Neither may exit 0: a step named install smoke is green
+          # only when brew install + brew test ran, matching the Harn step.
+          if ! URL="$(node script/formula-url-preflight.mjs Formula/burin.rb 2> /tmp/formula-url-preflight.err)"; then
+            reason="$(cat /tmp/formula-url-preflight.err)"
+            echo "::error::${reason}"
+            echo "formula-install-smoke: FAILED — ${reason}" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
+          brew install burin-labs/burin/burin
+          brew test burin-labs/burin/burin
+          echo "formula-install-smoke: OK — installed and tested ${URL}" >> "$GITHUB_STEP_SUMMARY"
       - name: Harn formula install smoke
         run: |
           set -euo pipefail
