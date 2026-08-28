@@ -106,9 +106,12 @@ try {
   // asserted rather than assumed.
   assert.match(
     formula,
-    /\(share\/"burin"\)\.install "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn"/,
+    /pkgshare\.install "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn"/,
   )
-  assert.match(formula, /assert_path_exists share\/"burin\/pipelines\/mode\/auto\.harn"/)
+  assert.match(formula, /assert_path_exists pkgshare\/"pipelines\/mode\/auto\.harn"/)
+  // brew audit --strict flags share/"burin" when pkgshare is the idiom.
+  // The on-disk path is unchanged (pkgshare == share/name).
+  assert.doesNotMatch(formula, /share\/"burin"/)
 
   // The Harn package boundary is what lets the bundled pipelines compile
   // outside a checkout, and `harn` is what compiles them. A formula that
