@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -11,6 +11,9 @@ import {
   classifyFormulaSource,
   classifyStableUrl,
   extractStableUrl,
+  formatGithubOutput,
+  githubAnnotation,
+  githubOutputs,
 } from "./formula-url-preflight.mjs"
 
 const HEAD_ONLY = `class Burin < Formula
@@ -33,10 +36,14 @@ end
 const STABLE_URL = "https://example.invalid/burin-1.2.3.tar.gz"
 const SCRIPT = fileURLToPath(new URL("./formula-url-preflight.mjs", import.meta.url))
 
-function runCli(formulaSource, { curlExit } = {}) {
+function runCli(formulaSource, { curlExit, extraEnv } = {}) {
   const root = mkdtempSync(join(tmpdir(), "formula-url-preflight-"))
   const formulaPath = join(root, "burin.rb")
-  const env = { ...process.env }
+  const env = { ...process.env, ...extraEnv }
+  delete env.GITHUB_ACTIONS
+  if (!extraEnv?.GITHUB_OUTPUT) {
+    delete env.GITHUB_OUTPUT
+  }
   try {
     writeFileSync(formulaPath, formulaSource)
     if (curlExit !== undefined) {
@@ -97,5 +104,52 @@ assert.match(unreachableCli.stderr, /example\.invalid\/burin-1\.2\.3\.tar\.gz/)
 const reachableCli = runCli(STABLE, { curlExit: 0 })
 assert.equal(reachableCli.status, EXIT.ok)
 assert.equal(reachableCli.stdout.trim(), STABLE_URL)
+
+const noUrlOutputs = githubOutputs(noUrl)
+const unreachableOutputs = githubOutputs(unreachable)
+const okOutputs = githubOutputs(ok)
+assert.equal(noUrlOutputs.should_install, "false")
+assert.equal(unreachableOutputs.should_install, "false")
+assert.equal(okOutputs.should_install, "true")
+assert.equal(noUrlOutputs.status, "no-url")
+assert.equal(unreachableOutputs.status, "unreachable")
+assert.notEqual(noUrl.message, unreachable.message)
+assert.match(formatGithubOutput(noUrl), /^should_install=false$/m)
+assert.match(formatGithubOutput(ok), /^should_install=true$/m)
+assert.match(githubAnnotation(noUrl), /^::warning::/)
+assert.match(githubAnnotation(unreachable), /^::notice::/)
+assert.equal(githubAnnotation(ok), "")
+
+const outputRoot = mkdtempSync(join(tmpdir(), "formula-url-preflight-out-"))
+const outputPath = join(outputRoot, "github-output")
+try {
+  const withOutput = runCli(HEAD_ONLY, { extraEnv: { GITHUB_OUTPUT: outputPath } })
+  assert.equal(withOutput.status, EXIT.noUrl)
+  const written = readFileSync(outputPath, "utf8")
+  assert.match(written, /^status=no-url$/m)
+  assert.match(written, /^should_install=false$/m)
+} finally {
+  rmSync(outputRoot, { recursive: true, force: true })
+}
+
+const ci = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8")
+assert.match(ci, /name: Formula URL preflight/)
+assert.match(
+  ci,
+  /if: needs\.formula-url-preflight\.outputs\.should_install == 'true'/,
+)
+assert.match(ci, /success\|skipped/)
+assert.doesNotMatch(
+  ci,
+  /Skipping formula install smoke because no stable formula URL is publicly reachable yet/,
+)
+const installJob = ci.match(/formula-install-smoke:\n[\s\S]*?(?=\n  [a-z-]+:)/)?.[0]
+assert.ok(installJob, "formula-install-smoke job must exist")
+assert.match(installJob, /brew install burin-labs\/burin\/burin/)
+assert.doesNotMatch(
+  installJob,
+  /echo "Skipping formula install smoke/,
+  "install job must not silent-green skip",
+)
 
 console.log("test-formula-url-preflight: OK")

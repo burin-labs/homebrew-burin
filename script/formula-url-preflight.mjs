@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { appendFileSync, readFileSync } from "node:fs"
 import { pathToFileURL } from "node:url"
 
 export const EXIT = {
@@ -34,7 +34,50 @@ export function classifyStableUrl(url, reachable) {
       message: `Stable formula URL is not publicly reachable: ${url}`,
     }
   }
-  return { status: "ok", exitCode: EXIT.ok, url }
+  return {
+    status: "ok",
+    exitCode: EXIT.ok,
+    url,
+    message: `Stable formula URL is reachable: ${url}`,
+  }
+}
+
+/// Install smoke may run only for a reachable stable URL. Head-only and
+/// unreachable stay classified (and loud) but must not report install success.
+export function githubOutputs(result) {
+  return {
+    status: result.status,
+    should_install: result.status === "ok" ? "true" : "false",
+    url: result.url ?? "",
+    message: result.message ?? "",
+  }
+}
+
+export function formatGithubOutput(result) {
+  return (
+    Object.entries(githubOutputs(result))
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n") + "\n"
+  )
+}
+
+export function writeGithubOutput(result, outputPath = process.env.GITHUB_OUTPUT) {
+  if (!outputPath) {
+    return
+  }
+  appendFileSync(outputPath, formatGithubOutput(result))
+}
+
+/// Distinct Actions annotations. Head-only is a structural gap; unreachable
+/// is a named transient. Neither is a silent skip.
+export function githubAnnotation(result) {
+  if (result.status === "no-url") {
+    return `::warning::${result.message}`
+  }
+  if (result.status === "unreachable") {
+    return `::notice::${result.message}`
+  }
+  return ""
 }
 
 export function probeUrl(url, { curlBin = process.env.CURL_BIN || "curl" } = {}) {
@@ -63,6 +106,11 @@ function main(argv = process.argv) {
     process.exit(EXIT.usage)
   }
   const result = classifyFormulaSource(readFileSync(formulaPath, "utf8"))
+  writeGithubOutput(result)
+  const annotation = githubAnnotation(result)
+  if (annotation && process.env.GITHUB_ACTIONS === "true") {
+    process.stdout.write(`${annotation}\n`)
+  }
   if (result.exitCode !== EXIT.ok) {
     process.stderr.write(`${result.message}\n`)
     process.exit(result.exitCode)
