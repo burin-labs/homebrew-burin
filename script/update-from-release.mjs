@@ -106,8 +106,10 @@ ${renderPlatformBlocks(binaries)}
       # manifest depends on. Harn finds all three by walking up from the
       # pipeline it compiles, so they belong beside \`pipelines\`, not inside it
       # (burin-code#6422).
-      (share/"burin").install "pipelines", "provider-catalog", "providers.toml",
-                              "harn.toml", "harn.lock", ".harn"
+      # pkgshare is share/name; brew audit --strict wants the idiom
+      # rather than writing the expanded path by hand (homebrew-burin#21).
+      pkgshare.install "pipelines", "provider-catalog", "providers.toml",
+                       "harn.toml", "harn.lock", ".harn"
     end
   end
 
@@ -115,7 +117,7 @@ ${renderPlatformBlocks(binaries)}
     require "json"
 
     assert_match version.to_s, shell_output("#{bin}/burin --version")
-    assert_path_exists share/"burin/pipelines/mode/auto.harn"
+    assert_path_exists pkgshare/"pipelines/mode/auto.harn"
     # A bare binary answers --version with no pipelines at all, and a binary
     # that finds its pipelines can still fail to compile them. So run a real
     # subcommand and read its result, rather than grepping for the absence of
