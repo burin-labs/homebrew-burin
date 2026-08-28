@@ -49,11 +49,12 @@ cleanly and then fails for the user.
 
 ## What changes on its own
 
-CI's install smoke step currently skips itself, because it probes the formula
-URL and finds nothing publicly reachable. Once the assets are public, that step
-starts running `brew install` and `brew test` for real. Expect the first public
-CI run to take noticeably longer, and to be the first end-to-end proof that the
-published artifacts install.
+CI classifies the formula URL in the Formula URL preflight job. Head-only and
+an unreachable stable URL are distinct annotations; both GitHub-skip Formula
+install smoke instead of reporting a successful install. Once the assets are
+public, that job starts running `brew install` and `brew test` for real. Expect
+the first public CI run to take noticeably longer, and to be the first
+end-to-end proof that the published artifacts install.
 
 ## What the formula installs, and why it is shaped this way
 
