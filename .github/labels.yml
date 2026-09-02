@@ -1,0 +1,44 @@
+# Shared label taxonomy for this repository.
+# Categories below are copied verbatim from burin-labs/.github .github/labels.yml.
+# Type labels reuse the unprefixed GitHub defaults (bug, enhancement) rather
+# than duplicating them under a prefix.
+
+- name: priority/p0
+  description: Must have, ships before anything else in flight
+  color: b60205
+- name: priority/p1
+  description: High priority
+  color: d93f0b
+- name: priority/p2
+  description: Medium priority
+  color: fbca04
+- name: priority/p3
+  description: Lower priority
+  color: 0e8a16
+
+- name: status/blocked
+  description: Cannot proceed until a named dependency clears
+  color: d93f0b
+- name: status/in-progress
+  description: An agent or engineer is actively working this
+  color: 0e8a16
+- name: status/needs-decision
+  description: Needs a founder or code-owner ruling before work continues
+  color: fbca04
+- name: status/ready
+  description: Scoped and unblocked, ready to pick up
+  color: 0e8a16
+
+- name: effort/small
+  description: Hours
+  color: c2e0c6
+- name: effort/medium
+  description: A day or two
+  color: fbca04
+- name: effort/large
+  description: Multi-day or multi-PR
+  color: d93f0b
+
+- name: area/formula
+  description: Tap formulae, casks, and the generators that write them
+  color: 1d76db

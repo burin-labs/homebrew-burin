@@ -24,3 +24,11 @@ is correct:
 Manual test plans, automated checks, or both — whatever genuinely
 demonstrates correctness.
 -->
+
+## Pull request title
+
+<!--
+Use `[Area] Sentence case`. Examples:
+  [Formula] Use pkgshare in the generated burin formula
+  [CI] Stop reporting green on a head-only formula smoke
+-->
