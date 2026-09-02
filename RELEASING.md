@@ -47,13 +47,49 @@ cleanly and then fails for the user.
 6. **`burin-code` release assets are publicly readable.** This is what the
    whole flip is waiting on.
 
+## The switch: `public-install.json`
+
+`public-install.json` states, as one typed fact, whether the public can install
+`burin` today. It is the only thing the launch flip has to change in this
+repository, and CI refuses to disagree with it in either direction.
+
+```json
+{ "publicInstallEnabled": false, "reason": "..." }
+```
+
+While it is `false`, Formula install smoke is allowed to skip and the Public
+install gate reports `gated` with the reason attached to the run summary. The
+moment it is `true`, three things become hard failures that were previously
+green:
+
+- a head-only or unreachable `Formula/burin.rb`,
+- a Formula install smoke that skipped rather than installed,
+- a Regen drift check that could not read `burin-code` releases at all.
+
+The reverse direction fails too. If `Formula/burin.rb` gains a reachable stable
+URL while `public-install.json` still says `false`, CI fails with
+`declaration-stale`, because that combination silently keeps install smoke
+switched off on exactly the formula that finally works.
+
+Flip it in the same commit that regenerates the formula, never before and never
+after.
+
+Note that `script/update-from-release.mjs` also rewrites `README.md`, and the
+generated README does not carry the hand-written pre-release warning that the
+committed one does. Regenerating at launch will drop that warning. That is
+probably correct at launch, but decide it deliberately rather than discovering
+it in the diff.
+
 ## What changes on its own
 
 CI classifies the formula URL in the Formula URL preflight job. Head-only and
 an unreachable stable URL are distinct annotations; both GitHub-skip Formula
-install smoke instead of reporting a successful install. Once the assets are
-public, that job starts running `brew install` and `brew test` for real. Expect
-the first public CI run to take noticeably longer, and to be the first
+install smoke instead of reporting a successful install. The Public install
+gate then decides whether that skip was legitimate, by comparing the
+classification against `public-install.json`. Once the assets are public and
+the declaration is flipped, install smoke starts running `brew install` and
+`brew test` for real, and a skip stops being an acceptable aggregate result.
+Expect the first public CI run to take noticeably longer, and to be the first
 end-to-end proof that the published artifacts install.
 
 ## What the formula installs, and why it is shaped this way

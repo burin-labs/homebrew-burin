@@ -206,6 +206,13 @@ formula actually installs, and what changes when \`burin-code\` goes public.
 // release.json could redirect Formula/Cask installs to an attacker-controlled
 // host. Homebrew enforces this on the Cask via `verified:`, but the Formula
 // has no equivalent -- so we gate both at generator time.
+//
+// `verified:` is version-split as of 2026-09: Homebrew 6.0.21 deprecates it
+// ("use the `url` stanza without it") while the Homebrew on GitHub's macos-14
+// runner still fails the audit without it ("a 'verified' parameter has to be
+// added"). Keep emitting it until CI's Homebrew is the one that objects;
+// removing it early turns tap CI red. The allowlist below does not depend on
+// which way that resolves.
 const ARTIFACT_URL_HOST = "github.com"
 const ARTIFACT_URL_PATH_PREFIX = "/burin-labs/burin-code/releases/download/"
 
