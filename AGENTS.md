@@ -1,5 +1,19 @@
 # AGENTS.md
 
+## Pull request titles
+
+Use `[Area] Sentence case`. The area is one of `Formula`, `CI`, or `Docs`.
+
+- `[Formula] Use pkgshare in the generated burin formula`
+- `[CI] Stop reporting green on a head-only formula smoke`
+- `[Docs] Say which install channel is gated before launch`
+
+Keep the title on one line, under about 70 characters. Say what changed, not
+which files moved. Capitalize the first word after the bracket and leave the
+rest in sentence case.
+
+`CONTRIBUTING.md` states the contribution policy for this repository.
+
 <!-- BEGIN HARN SHARED AGENT CONTRACT: managed by harn-bump-fleet -->
 
 ## Ecosystem working agreement
