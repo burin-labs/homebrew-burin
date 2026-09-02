@@ -1,10 +1,18 @@
+<!--
+Title this pull request `[Area] Sentence case`. Examples:
+  [Formula] Use pkgshare in the generated burin formula
+  [CI] Stop reporting green on a head-only formula smoke
+-->
+
 ## Description
 
 <!--
-Plain language, bullet points, succinct. Describe what this PR does
-END-TO-END: the behavior change an agent, user, or downstream repo actually
-sees — NOT a list of files or tests (the Files tab already shows those). If
-the flow or data path is non-obvious, add a small Mermaid diagram in a
+Three to five sentences, in plain language: what changed in behavior an
+agent, user, or downstream repo actually sees, why it changed, the one risk
+or blind spot, and how you verified it.
+
+Not a list of files or tests — the Files and Checks tabs already show those.
+If the flow or data path is non-obvious, add a small Mermaid diagram in a
 ```mermaid fence.
 -->
 
@@ -23,12 +31,4 @@ is correct:
 
 Manual test plans, automated checks, or both — whatever genuinely
 demonstrates correctness.
--->
-
-## Pull request title
-
-<!--
-Use `[Area] Sentence case`. Examples:
-  [Formula] Use pkgshare in the generated burin formula
-  [CI] Stop reporting green on a head-only formula smoke
 -->
