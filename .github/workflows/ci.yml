@@ -28,6 +28,7 @@ jobs:
           node script/test-update-harn-from-release.mjs
           node script/test-publish-harn-formula.mjs
           node script/test-formula-url-preflight.mjs
+          node script/test-public-install-gate.mjs
       - name: Install Homebrew on Linux
         if: runner.os == 'Linux'
         run: |
@@ -111,28 +112,41 @@ jobs:
           # private to the default GITHUB_TOKEN (404 -> nonzero exit) and
           # we want to skip cleanly in that case rather than fail the gate.
           set -uo pipefail
+          # Whether a skip is allowed at all. Once public-install.json says the
+          # public can install `burin`, the committed formula MUST be provably
+          # regenerated from a real published release, and "could not check"
+          # stops being an acceptable answer.
+          PUBLIC_INSTALL_ENABLED="$(jq -r '.publicInstallEnabled' public-install.json)"
+          skip_or_fail() {
+            echo "regen-drift: $1" >> "$GITHUB_STEP_SUMMARY"
+            if [ "${PUBLIC_INSTALL_ENABLED}" = "true" ]; then
+              echo "::error::regen-drift cannot verify the tap against a published release, and public-install.json says the public can install \`burin\`. $1" >&2
+              exit 1
+            fi
+            echo "$1"
+            exit 0
+          }
           RELEASES_JSON="$(gh api repos/burin-labs/burin-code/releases 2>/dev/null || true)"
           if [ -z "${RELEASES_JSON}" ]; then
-            echo "Could not list burin-code releases (token may lack cross-repo access, or no releases yet)."
-            echo "regen-drift: SKIPPED (no accessible releases)" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            skip_or_fail "SKIPPED (could not list burin-code releases at all)"
           fi
           # `gh api ... || true` above swallows the exit code but leaves an
           # error-shaped JSON object (e.g. `{"message":"Not Found",...}`) in
           # RELEASES_JSON when the default GITHUB_TOKEN lacks cross-repo
-          # access to a private burin-code. Guard on `type == "array"` so jq
-          # doesn't blow up trying to `select(.draft)` on a string value.
-          RELEASE_TAG="$(printf '%s' "${RELEASES_JSON}" | jq -r 'if type == "array" then [.[] | select(.draft == false and .prerelease == false)] | .[0].tag_name // "" else "" end' 2>/dev/null || true)"
+          # access to a private burin-code. That is NOT the same fact as "there
+          # are no published releases", and reporting it as such is how this job
+          # spent weeks announcing that no release had been published while
+          # burin-code v0.2.0 sat published with a release.json asset attached.
+          if [ "$(printf '%s' "${RELEASES_JSON}" | jq -r 'type')" != "array" ]; then
+            skip_or_fail "SKIPPED (no cross-repo read access to burin-labs/burin-code; this is an access fact, not a release fact)"
+          fi
+          RELEASE_TAG="$(printf '%s' "${RELEASES_JSON}" | jq -r '[.[] | select(.draft == false and .prerelease == false)] | .[0].tag_name // ""')"
           if [ -z "${RELEASE_TAG}" ]; then
-            echo "No published release.json yet; skipping regen-drift check."
-            echo "regen-drift: SKIPPED (no published release)" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            skip_or_fail "SKIPPED (burin-code has no published non-prerelease release)"
           fi
           MANIFEST_URL="$(gh api "repos/burin-labs/burin-code/releases/tags/${RELEASE_TAG}" --jq '.assets[] | select(.name == "release.json") | .url' 2>/dev/null || true)"
           if [ -z "${MANIFEST_URL}" ]; then
-            echo "Release ${RELEASE_TAG} has no release.json asset; skipping."
-            echo "regen-drift: SKIPPED (no release.json asset on ${RELEASE_TAG})" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            skip_or_fail "SKIPPED (release ${RELEASE_TAG} has no release.json asset)"
           fi
           curl -fsSL -H "Accept: application/octet-stream" -H "Authorization: Bearer ${GH_TOKEN}" "${MANIFEST_URL}" -o /tmp/release.json
           node script/update-from-release.mjs --release-manifest /tmp/release.json
@@ -182,6 +196,32 @@ jobs:
               ;;
           esac
 
+  public-install-gate:
+    name: Public install gate
+    runs-on: ubuntu-latest
+    needs: formula-url-preflight
+    outputs:
+      require_install_smoke: ${{ steps.gate.outputs.require_install_smoke }}
+      verdict: ${{ steps.gate.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Compare the tap against public-install.json
+        id: gate
+        env:
+          PREFLIGHT_STATUS: ${{ needs.formula-url-preflight.outputs.status }}
+        run: |
+          # No `|| true` and no default status. An empty PREFLIGHT_STATUS is an
+          # unknown status, and the gate exits non-zero on unknown rather than
+          # reading it as "not ok" -- which would be indistinguishable from the
+          # gated state this tap has been sitting in.
+          set -o pipefail
+          node script/public-install-gate.mjs public-install.json "${PREFLIGHT_STATUS}" \
+            | tee /tmp/public-install-gate.txt
+          echo "public-install-gate: $(cat /tmp/public-install-gate.txt)" >> "$GITHUB_STEP_SUMMARY"
+
   formula-install-smoke:
     name: Formula install smoke (${{ matrix.os }})
     needs: formula-url-preflight
@@ -214,7 +254,15 @@ jobs:
   ci-status:
     name: CI status
     runs-on: ubuntu-latest
-    needs: [tap-checks, cask-checks, regen-drift, formula-url-preflight, formula-install-smoke]
+    needs:
+      [
+        tap-checks,
+        cask-checks,
+        regen-drift,
+        formula-url-preflight,
+        public-install-gate,
+        formula-install-smoke,
+      ]
     if: always()
     steps:
       - name: Check aggregate result
@@ -223,15 +271,28 @@ jobs:
           CASK_RESULT: ${{ needs.cask-checks.result }}
           REGEN_RESULT: ${{ needs.regen-drift.result }}
           PREFLIGHT_RESULT: ${{ needs.formula-url-preflight.result }}
+          GATE_RESULT: ${{ needs.public-install-gate.result }}
+          REQUIRE_INSTALL_SMOKE: ${{ needs.public-install-gate.outputs.require_install_smoke }}
           INSTALL_RESULT: ${{ needs.formula-install-smoke.result }}
         run: |
           test "${TAP_RESULT}" = "success"
           test "${CASK_RESULT}" = "success"
           test "${REGEN_RESULT}" = "success"
           test "${PREFLIGHT_RESULT}" = "success"
-          # Skipped means no stable URL ran brew install. The install job
-          # itself never reports success unless brew install + brew test ran.
-          case "${INSTALL_RESULT}" in
-            success|skipped) ;;
-            *) exit 1 ;;
-          esac
+          test "${GATE_RESULT}" = "success"
+          # A skipped install smoke is only acceptable while public-install.json
+          # says the public cannot install `burin` anyway. Once it says they can,
+          # "did not run" stops being an answer: the whole reason #15 survived
+          # this long is that a skip and a pass arrived here looking identical.
+          if [ "${REQUIRE_INSTALL_SMOKE}" != "true" ] && [ "${REQUIRE_INSTALL_SMOKE}" != "false" ]; then
+            echo "public-install-gate did not report require_install_smoke; refusing to guess." >&2
+            exit 1
+          fi
+          if [ "${REQUIRE_INSTALL_SMOKE}" = "true" ]; then
+            test "${INSTALL_RESULT}" = "success"
+          else
+            case "${INSTALL_RESULT}" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          fi

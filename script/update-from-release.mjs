@@ -41,8 +41,7 @@ export function renderCask({ version, dmg, minimumSystemVersion }) {
   version "${version}"
   sha256 "${dmg.sha256}"
 
-  url "${dmg.url}",
-      verified: "github.com/burin-labs/burin-code/"
+  url "${dmg.url}"
   name "Burin Code"
   desc "AI-native coding workbench"
   homepage "https://burincode.com/"
@@ -204,8 +203,9 @@ formula actually installs, and what changes when \`burin-code\` goes public.
 // Hard allowlist for artifact URLs. The tap install flow ships whatever URL
 // the release manifest names; without an allowlist a malicious or compromised
 // release.json could redirect Formula/Cask installs to an attacker-controlled
-// host. Homebrew enforces this on the Cask via `verified:`, but the Formula
-// has no equivalent -- so we gate both at generator time.
+// Homebrew deprecated the Cask's `verified:` parameter in 6.0.21, and it never
+// had a Formula equivalent, so this generator-time allowlist is now the only
+// thing enforcing it -- for both the Cask and the Formula.
 const ARTIFACT_URL_HOST = "github.com"
 const ARTIFACT_URL_PATH_PREFIX = "/burin-labs/burin-code/releases/download/"
 

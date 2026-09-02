@@ -1,0 +1,11 @@
+{
+  "$comment": "Whether a member of the public can run `brew install burin` today. This is the one switch the launch flip turns; CI reads it and refuses to disagree with it in either direction. See script/public-install-gate.mjs.",
+  "publicInstallEnabled": false,
+  "reason": "burin-labs/burin-code is a private repository, so every release asset URL 404s anonymously, and no public CLI artifact is published anywhere else. Formula/burin.rb is therefore still head-only and its head clones that private repo.",
+  "blockedBy": "https://github.com/burin-labs/homebrew-burin/issues/15",
+  "unblockedBy": [
+    "Publish the Burin CLI archives somewhere anonymously reachable (public burin-code, a public release mirror, or a public npm scope).",
+    "Regenerate the tap from that release: node script/update-from-release.mjs --release-manifest release.json",
+    "Flip publicInstallEnabled to true in the same change."
+  ]
+}
