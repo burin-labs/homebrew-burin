@@ -644,6 +644,7 @@ export async function publishHarnFormula({
   }
 
   let headSha = observation.branch.head_sha
+  let committedFormula = false
   const currentFormulaSha = sha256(observation.branch.formula ?? "")
   if (currentFormulaSha !== formulaSha256) {
     const openPull = (observation.pull_requests ?? []).find((pull) => pull.state === "OPEN")
@@ -663,12 +664,31 @@ export async function publishHarnFormula({
         formula,
         headline: `chore: update Harn formula to ${manifest.version}`,
       })
+      committedFormula = true
     } catch (error) {
       throw new Error(`exact-head lease rejected formula publication: ${error.message}`)
     }
   }
 
   observation = await adapter.observe({repository, baseBranch, branch})
+  // A successful commit may precede visibility in the observation API. Wait
+  // only for this invocation's known prior head; never retry an unrelated move.
+  if (committedFormula) {
+    const visibilityAttempts = 3
+    for (let attempt = 1; attempt <= visibilityAttempts; attempt += 1) {
+      assertExactBranch(observation, branch)
+      if (
+        observation.base?.head_sha !== baseHead ||
+        observation.branch?.head_sha !== baseHead ||
+        sha256(observation.branch.formula ?? "") !== currentFormulaSha
+      ) break
+      if (attempt === visibilityAttempts) {
+        throw new Error(`committed formula head ${headSha} not visible after ${visibilityAttempts} observations`)
+      }
+      await adapter.wait(attempt)
+      observation = await adapter.observe({repository, baseBranch, branch})
+    }
+  }
   await assertExactProducerHead({
     observation,
     adapter,

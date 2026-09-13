@@ -241,6 +241,43 @@ await test("wrong branch observation fails by name", async () => {
   )
 })
 
+await test("delayed commit visibility waits without committing again", async () => {
+  const manifest = fixtureManifest()
+  const adapter = new FakeAdapter(manifest)
+  adapter.commitReadbackHeads = [BASE_HEAD, BASE_HEAD]
+  const receipt = await publishHarnFormula({manifest, workflowRunId: 44, adapter, checkAttempts: 1})
+  assert.equal(receipt.head_sha, SIGNED_HEAD)
+  assert.equal(adapter.commitLeases.length, 1)
+  assert.deepEqual(adapter.waits, [1, 2])
+})
+
+await test("invisible committed head stops after a bounded observation window", async () => {
+  const manifest = fixtureManifest()
+  const adapter = new FakeAdapter(manifest)
+  adapter.commitReadbackHeads = [BASE_HEAD, BASE_HEAD, BASE_HEAD, BASE_HEAD]
+  await rejectsNamed(
+    publishHarnFormula({manifest, workflowRunId: 45, adapter, checkAttempts: 1}),
+    /committed formula head .* not visible after 3 observations/,
+  )
+  assert.equal(adapter.commitLeases.length, 1)
+  assert.deepEqual(adapter.waits, [1, 2])
+  assert.equal(adapter.pull, null)
+  assert.equal(adapter.commitReadbackHeads.length, 1)
+})
+
+await test("unrelated movement after stale visibility still fails immediately", async () => {
+  const manifest = fixtureManifest()
+  const adapter = new FakeAdapter(manifest)
+  adapter.commitReadbackHeads = [BASE_HEAD, MOVED_HEAD]
+  await rejectsNamed(
+    publishHarnFormula({manifest, workflowRunId: 46, adapter, checkAttempts: 1}),
+    /published branch head moved/,
+  )
+  assert.deepEqual(adapter.waits, [1])
+  assert.equal(adapter.commitLeases.length, 1)
+  assert.equal(adapter.pull, null)
+})
+
 await test("moved published head fails by name", async () => {
   const manifest = fixtureManifest()
   const adapter = new FakeAdapter(manifest)
@@ -496,6 +533,8 @@ class FakeAdapter {
     this.pull = null
     this.createdBranches = []
     this.commitLeases = []
+    this.commitReadbackHeads = []
+    this.waits = []
     this.pullRequestBodyUpdates = []
     this.projectionReads = []
     this.projectionFiles = [{path: "Formula/harn.rb", status: "modified"}]
@@ -521,6 +560,10 @@ class FakeAdapter {
     if (branch && this.wrongBranchName) branch.name = this.wrongBranchName
     if (branch && this.moveAfterCommit && this.commitLeases.length > 0) {
       branch.head_sha = MOVED_HEAD
+    }
+    if (branch && this.commitLeases.length > 0 && this.commitReadbackHeads.length > 0) {
+      branch.head_sha = this.commitReadbackHeads.shift()
+      if (branch.head_sha === BASE_HEAD) branch.formula = this.baseFormula
     }
     if (this.moveBaseAfterCommit && this.commitLeases.length > 0) {
       baseHead = MOVED_HEAD
@@ -628,7 +671,7 @@ class FakeAdapter {
     }
   }
 
-  async wait() {}
+  async wait(attempt) { this.waits.push(attempt) }
 }
 
 await main()
