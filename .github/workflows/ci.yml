@@ -39,7 +39,13 @@ jobs:
           echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
           echo "/home/linuxbrew/.linuxbrew/sbin" >> "$GITHUB_PATH"
       - name: Tap local checkout
-        run: brew tap burin-labs/burin "$PWD"
+        run: |
+          # Homebrew 6 requires trust before tap validation loads Ruby code.
+          # Older runner images do not provide the trust command.
+          if brew command trust >/dev/null 2>&1; then
+            brew trust --tap "$PWD"
+          fi
+          brew tap burin-labs/burin "$PWD"
       - name: Style
         run: brew style burin-labs/burin/burin
       - name: Harn formula style
@@ -72,7 +78,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tap local checkout
-        run: brew tap burin-labs/burin "$PWD"
+        run: |
+          if brew command trust >/dev/null 2>&1; then
+            brew trust --tap "$PWD"
+          fi
+          brew tap burin-labs/burin "$PWD"
       - name: Style
         run: brew style burin-labs/burin/burin-code
       - name: Cask audit
@@ -243,7 +253,11 @@ jobs:
           echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
           echo "/home/linuxbrew/.linuxbrew/sbin" >> "$GITHUB_PATH"
       - name: Tap local checkout
-        run: brew tap burin-labs/burin "$PWD"
+        run: |
+          if brew command trust >/dev/null 2>&1; then
+            brew trust --tap "$PWD"
+          fi
+          brew tap burin-labs/burin "$PWD"
       - name: Install and test formula
         run: |
           set -euo pipefail
