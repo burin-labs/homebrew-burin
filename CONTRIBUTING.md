@@ -33,8 +33,9 @@ same thing at more length.
 - Do not hand-edit `Formula/*.rb` or `Casks/*.rb`. Change the generator in
   `script/` instead, and let a release bump regenerate the file. `RELEASING.md`
   describes that flow.
-- `.github/workflows/ci.yml` and `.github/dependabot.yml` are org-managed
-  projections. Change them at their owning repository.
+- Tap validation in `.github/workflows/ci.yml` is maintained here.
+  `.github/dependabot.yml` is an org-managed projection; change its source in
+  `burin-labs/.github`.
 - Run the generator tests in `script/` before you push.
 
 ## Pull request titles
