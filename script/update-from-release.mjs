@@ -77,7 +77,7 @@ export function renderFormula({ version, binaries, bundle }) {
   desc "AI-native terminal coding workbench"
   homepage "https://burincode.com/"
   version "${version}"
-  license "Apache-2.0"
+  license :cannot_represent
 
   # \`burin\` delegates its agent subcommands to the \`harn\` runtime, which it
   # finds on PATH. Without this the binary installs, answers \`--version\`, and

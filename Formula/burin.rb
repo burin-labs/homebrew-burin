@@ -1,7 +1,7 @@
 class Burin < Formula
   desc "AI-native terminal coding workbench"
   homepage "https://burincode.com/"
-  license "Apache-2.0"
+  license :cannot_represent
   head "https://github.com/burin-labs/burin-code.git", branch: "main"
 
   depends_on "node@22"
