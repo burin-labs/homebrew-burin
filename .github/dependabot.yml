@@ -1,7 +1,8 @@
 version: 2
 
-# Cooldown defers freshly-published versions so a compromised release has time
-# to be yanked or flagged before Dependabot proposes it.
+# This file is the source projected into repositories that use GitHub Actions.
+# Cooldown gives a compromised release time to be yanked or flagged before an
+# automated PR proposes it.
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
