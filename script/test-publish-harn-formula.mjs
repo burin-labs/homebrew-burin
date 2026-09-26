@@ -477,6 +477,11 @@ await test("workflow establishes the App identity before checkout and has no for
     /name: Upload typed producer receipt[\s\S]*?path: \$\{\{ runner\.temp \}\}\/harn-formula-receipt\.json[\s\S]*?if-no-files-found: error/,
   )
   assert.doesNotMatch(workflow, /if-no-files-found: ignore/)
+  // Burin's runtime bump waits on this merge; an unarmed pull request waited for a person.
+  const publishStep = workflow.indexOf("name: Publish signed version-qualified formula update")
+  const armStep = workflow.indexOf("name: Arm auto-merge on the formula pull request")
+  assert(publishStep >= 0 && armStep > publishStep)
+  assert.match(workflow, /gh pr merge "\$number"[^\n]*--auto --squash --match-head-commit "\$head"/)
   assert.doesNotMatch(workflow, /git push|force-with-lease|force: true/)
 })
 

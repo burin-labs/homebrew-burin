@@ -92,6 +92,34 @@ jobs:
             --version "${TAG}" \
             --receipt "${RUNNER_TEMP}/harn-formula-receipt.json"
 
+      # Harn Fleet orders burin-code's runtime bump after this merge, so an open
+      # formula pull request holds that repin too. The producer returns once
+      # checks have started, so the pull request is not yet mergeable and
+      # `--auto` arms rather than merging. `--auto` prints nothing either way:
+      # read the decision back instead of trusting the exit status.
+      - name: Arm auto-merge on the formula pull request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RECEIPT: ${{ runner.temp }}/harn-formula-receipt.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$(jq -r .state "$RECEIPT")"
+          if [ "$state" != "pull_request_open" ]; then
+            echo "Formula pull request is already ${state}; nothing to arm."
+            exit 0
+          fi
+          number="$(jq -r .pull_request.number "$RECEIPT")"
+          head="$(jq -r .head_sha "$RECEIPT")"
+          gh pr merge "$number" -R "$GITHUB_REPOSITORY" --auto --squash --match-head-commit "$head"
+          decision="$(gh pr view "$number" -R "$GITHUB_REPOSITORY" \
+            --json state,autoMergeRequest --jq '"\(.state) \(.autoMergeRequest != null)"')"
+          echo "Formula pull request #${number}: state and auto-merge armed = ${decision}"
+          if [ "$decision" != "MERGED false" ] && [ "${decision#* }" != "true" ]; then
+            echo "::error::formula pull request #${number} is neither merged nor armed" >&2
+            exit 1
+          fi
+
       - name: Upload typed producer receipt
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
