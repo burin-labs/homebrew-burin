@@ -508,7 +508,7 @@ function pullRequestBody(manifest, workflowRunId) {
     "",
     "The producer downloaded and SHA-256 verified all four supported macOS/Linux archives before publishing this GitHub-signed exact-head commit.",
     "",
-    "Opened by `.github/workflows/bump-harn-formula.yml`; this pull request remains unarmed for Fleet or a person to evaluate.",
+    "Opened by `.github/workflows/bump-harn-formula.yml`; the workflow then arms squash auto-merge on this exact head, so the required checks decide the merge.",
     "",
     producerRunMarker(workflowRunId),
   ].join("\n")
