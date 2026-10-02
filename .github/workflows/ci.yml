@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -74,7 +74,7 @@ jobs:
 
   cask-checks:
     name: Cask checks
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tap local checkout
@@ -102,9 +102,22 @@ jobs:
             echo "Skipping cask install smoke because ${URL} is not publicly reachable yet."
           fi
 
+  runner-labels:
+    name: Hosted runner labels
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check hosted runner labels
+        # Org gate owned by burin-labs/.github: refuses the floating latest
+        # Ubuntu label, which GitHub moves to a new image without a commit
+        # here. Same pin as harn and burin-code.
+        uses: burin-labs/.github/.github/actions/hosted-runner-labels@47b97f48a4862d684f54a0b8ee7aa370d8bfc126
+        with:
+          harn-version: 0.10.133
+
   regen-drift:
     name: Regen drift check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -170,7 +183,7 @@ jobs:
 
   formula-url-preflight:
     name: Formula URL preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       should_install: ${{ steps.classify.outputs.should_install }}
       status: ${{ steps.classify.outputs.status }}
@@ -208,7 +221,7 @@ jobs:
 
   public-install-gate:
     name: Public install gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: formula-url-preflight
     outputs:
       require_install_smoke: ${{ steps.gate.outputs.require_install_smoke }}
@@ -240,7 +253,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Homebrew on Linux
@@ -267,11 +280,12 @@ jobs:
 
   ci-status:
     name: CI status
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       [
         tap-checks,
         cask-checks,
+        runner-labels,
         regen-drift,
         formula-url-preflight,
         public-install-gate,
@@ -283,6 +297,7 @@ jobs:
         env:
           TAP_RESULT: ${{ needs.tap-checks.result }}
           CASK_RESULT: ${{ needs.cask-checks.result }}
+          LABELS_RESULT: ${{ needs.runner-labels.result }}
           REGEN_RESULT: ${{ needs.regen-drift.result }}
           PREFLIGHT_RESULT: ${{ needs.formula-url-preflight.result }}
           GATE_RESULT: ${{ needs.public-install-gate.result }}
@@ -291,6 +306,7 @@ jobs:
         run: |
           test "${TAP_RESULT}" = "success"
           test "${CASK_RESULT}" = "success"
+          test "${LABELS_RESULT}" = "success"
           test "${REGEN_RESULT}" = "success"
           test "${PREFLIGHT_RESULT}" = "success"
           test "${GATE_RESULT}" = "success"
