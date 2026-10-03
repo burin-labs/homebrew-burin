@@ -74,6 +74,8 @@ try {
   assert.match(cask, /version "1\.2\.3"/)
   assert.match(cask, /sha256 "aaaaaaaa/)
   assert.match(cask, /depends_on macos: :sonoma/)
+  // The supported macOS CI image rejects this obsolete URL parameter.
+  assert.doesNotMatch(cask, /verified:/)
 
   // The formula installs the standalone archive for the running platform.
   assert.match(formula, /version "1\.2\.4"/)

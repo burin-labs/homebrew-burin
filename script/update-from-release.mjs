@@ -41,8 +41,7 @@ export function renderCask({ version, dmg, minimumSystemVersion }) {
   version "${version}"
   sha256 "${dmg.sha256}"
 
-  url "${dmg.url}",
-      verified: "github.com/burin-labs/burin-code/"
+  url "${dmg.url}"
   name "Burin Code"
   desc "AI-native coding workbench"
   homepage "https://burincode.com/"
@@ -204,15 +203,8 @@ formula actually installs, and what changes when \`burin-code\` goes public.
 // Hard allowlist for artifact URLs. The tap install flow ships whatever URL
 // the release manifest names; without an allowlist a malicious or compromised
 // release.json could redirect Formula/Cask installs to an attacker-controlled
-// host. Homebrew enforces this on the Cask via `verified:`, but the Formula
-// has no equivalent -- so we gate both at generator time.
-//
-// `verified:` is version-split as of 2026-09: Homebrew 6.0.21 deprecates it
-// ("use the `url` stanza without it") while the Homebrew on GitHub's macos-14
-// runner still fails the audit without it ("a 'verified' parameter has to be
-// added"). Keep emitting it until CI's Homebrew is the one that objects;
-// removing it early turns tap CI red. The allowlist below does not depend on
-// which way that resolves.
+// host. Validate both the Formula and Cask artifacts here; supported Homebrew
+// versions reject the former `verified:` Cask URL parameter.
 const ARTIFACT_URL_HOST = "github.com"
 const ARTIFACT_URL_PATH_PREFIX = "/burin-labs/burin-code/releases/download/"
 
