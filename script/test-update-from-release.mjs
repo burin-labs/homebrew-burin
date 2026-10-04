@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { updateFromReleaseManifest } from "./update-from-release.mjs"
 
 const root = mkdtempSync(join(tmpdir(), "burin-homebrew-test-"))
 const originalCwd = process.cwd()
+const generator = fileURLToPath(new URL("./update-from-release.mjs", import.meta.url))
 
 const RELEASE_BASE =
-  "https://github.com/burin-labs/burin-code/releases/download/v1.2.3"
+  "https://github.com/burin-labs/burin-releases/releases/download/v1.2.3"
 
 const CLI_ARCHIVES = {
   "cli-darwin-arm64": "burin-aarch64-apple-darwin.tar.gz",
@@ -65,6 +68,12 @@ function writeManifest(name, value) {
 try {
   process.chdir(root)
 
+  const source = spawnSync(process.execPath, [generator, "--print-release-repository"], {
+    encoding: "utf8",
+  })
+  assert.equal(source.status, 0)
+  assert.equal(source.stdout.trim(), "burin-labs/burin-releases")
+
   updateFromReleaseManifest(writeManifest("release", manifest()))
 
   const cask = readFileSync("Casks/burin-code.rb", "utf-8")
@@ -74,6 +83,26 @@ try {
   assert.match(cask, /version "1\.2\.3"/)
   assert.match(cask, /sha256 "aaaaaaaa/)
   assert.match(cask, /depends_on macos: :sonoma/)
+  assert.match(readme, /burin-labs\/burin-releases/)
+  assert.doesNotMatch(cask + formula, /burin-labs\/burin-code/)
+  const mixed = spawnSync(process.execPath, [generator, "--print-release-repository",
+    "--release-manifest", writeManifest("mixed", manifest())], { encoding: "utf8" })
+  assert.equal(mixed.status, 1)
+  assert.match(mixed.stderr, /cannot regenerate files/)
+  assert.equal(readFileSync("Casks/burin-code.rb", "utf8"), cask)
+  assert.equal(readFileSync("Formula/burin.rb", "utf8"), formula)
+
+  for (const [key, artifact] of Object.entries(manifest().artifacts)) {
+    assert.throws(
+      () => updateFromReleaseManifest(writeManifest(`private-${key}`, manifest({
+        [key]: { ...artifact, url: artifact.url.replace("/burin-releases/", "/burin-code/") },
+      }))),
+      /must be a GitHub release asset URL under/,
+      `private-source URL for ${key} must be refused`,
+    )
+    assert.equal(readFileSync("Casks/burin-code.rb", "utf8"), cask)
+    assert.equal(readFileSync("Formula/burin.rb", "utf8"), formula)
+  }
   // The supported macOS CI image rejects this obsolete URL parameter.
   assert.doesNotMatch(cask, /verified:/)
 
@@ -184,7 +213,7 @@ try {
           }),
         ),
       ),
-    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-code\/releases\/download\//,
+    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-releases\/releases\/download\//,
   )
 
   assert.throws(
@@ -202,7 +231,7 @@ try {
           }),
         ),
       ),
-    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-code\/releases\/download\//,
+    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-releases\/releases\/download\//,
   )
 
   // The same allowlist must cover the platform archives, which are the assets
@@ -222,7 +251,7 @@ try {
           }),
         ),
       ),
-    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-code\/releases\/download\//,
+    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-releases\/releases\/download\//,
   )
 
   assert.throws(
@@ -240,7 +269,7 @@ try {
           }),
         ),
       ),
-    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-code\/releases\/download\//,
+    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-releases\/releases\/download\//,
   )
 
   assert.throws(
@@ -258,7 +287,7 @@ try {
           }),
         ),
       ),
-    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-code\/releases\/download\/v1\.2\.3\//,
+    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-releases\/releases\/download\/v1\.2\.3\//,
   )
 
   assert.throws(

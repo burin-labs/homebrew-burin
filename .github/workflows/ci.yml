@@ -133,9 +133,8 @@ jobs:
         run: |
           # NB: GitHub Actions wraps this script with `bash -e {0}`, so an
           # implicit `set -e` is already on. We deliberately use `|| true`
-          # around the cross-repo `gh api` calls -- burin-code may be
-          # private to the default GITHUB_TOKEN (404 -> nonzero exit) and
-          # we want to skip cleanly in that case rather than fail the gate.
+          # around release discovery. While public install is disabled,
+          # a missing publication is an explicit skip, not install evidence.
           set -uo pipefail
           # Whether a skip is allowed at all. Once public-install.json says the
           # public can install `burin`, the committed formula MUST be provably
@@ -151,29 +150,27 @@ jobs:
             echo "$1"
             exit 0
           }
-          RELEASES_JSON="$(gh api repos/burin-labs/burin-code/releases 2>/dev/null || true)"
+          RELEASE_REPOSITORY="$(node script/update-from-release.mjs --print-release-repository)" || exit 1
+          RELEASES_JSON="$(gh api "repos/${RELEASE_REPOSITORY}/releases" 2>/dev/null || true)"
           if [ -z "${RELEASES_JSON}" ]; then
-            skip_or_fail "SKIPPED (could not list burin-code releases at all)"
+            skip_or_fail "SKIPPED (could not list ${RELEASE_REPOSITORY} releases at all)"
           fi
           # `gh api ... || true` above swallows the exit code but leaves an
           # error-shaped JSON object (e.g. `{"message":"Not Found",...}`) in
-          # RELEASES_JSON when the default GITHUB_TOKEN lacks cross-repo
-          # access to a private burin-code. That is NOT the same fact as "there
-          # are no published releases", and reporting it as such is how this job
-          # spent weeks announcing that no release had been published while
-          # burin-code v0.2.0 sat published with a release.json asset attached.
+          # RELEASES_JSON when discovery fails. That is NOT the same fact as
+          # "there are no published releases".
           if [ "$(printf '%s' "${RELEASES_JSON}" | jq -r 'type')" != "array" ]; then
-            skip_or_fail "SKIPPED (no cross-repo read access to burin-labs/burin-code; this is an access fact, not a release fact)"
+            skip_or_fail "SKIPPED (could not read ${RELEASE_REPOSITORY}; this is an access fact, not a release fact)"
           fi
           RELEASE_TAG="$(printf '%s' "${RELEASES_JSON}" | jq -r '[.[] | select(.draft == false and .prerelease == false)] | .[0].tag_name // ""')"
           if [ -z "${RELEASE_TAG}" ]; then
-            skip_or_fail "SKIPPED (burin-code has no published non-prerelease release)"
+            skip_or_fail "SKIPPED (${RELEASE_REPOSITORY} has no published non-prerelease release)"
           fi
-          MANIFEST_URL="$(gh api "repos/burin-labs/burin-code/releases/tags/${RELEASE_TAG}" --jq '.assets[] | select(.name == "release.json") | .url' 2>/dev/null || true)"
+          MANIFEST_URL="$(gh api "repos/${RELEASE_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.assets[] | select(.name == "release.json") | .browser_download_url' 2>/dev/null || true)"
           if [ -z "${MANIFEST_URL}" ]; then
             skip_or_fail "SKIPPED (release ${RELEASE_TAG} has no release.json asset)"
           fi
-          curl -fsSL -H "Accept: application/octet-stream" -H "Authorization: Bearer ${GH_TOKEN}" "${MANIFEST_URL}" -o /tmp/release.json
+          curl -qfsSL "${MANIFEST_URL}" -o /tmp/release.json
           node script/update-from-release.mjs --release-manifest /tmp/release.json
           if ! git diff --exit-code -- Formula/burin.rb Casks README.md; then
             echo "Regenerated Formula/Cask/README differ from committed copy for ${RELEASE_TAG}." >&2

@@ -3,6 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { pathToFileURL, URL } from "node:url"
 
+export const PUBLIC_RELEASE_REPOSITORY = "burin-labs/burin-releases"
+
 export function updateFromReleaseManifest(path) {
   const manifest = JSON.parse(readFileSync(path, "utf-8"))
   const version = requireString(manifest.version, "version")
@@ -178,7 +180,7 @@ Current versions:
 - \`burin-code\`: ${appVersion}
 
 The \`burin\` formula and \`burin-code\` cask are generated from the
-\`release.json\` asset published by \`burin-labs/burin-code\` releases:
+\`release.json\` asset published by \`${PUBLIC_RELEASE_REPOSITORY}\` releases:
 
 \`\`\`sh
 node script/update-from-release.mjs --release-manifest /path/to/release.json
@@ -206,7 +208,7 @@ formula actually installs, and what changes when \`burin-code\` goes public.
 // host. Validate both the Formula and Cask artifacts here; supported Homebrew
 // versions reject the former `verified:` Cask URL parameter.
 const ARTIFACT_URL_HOST = "github.com"
-const ARTIFACT_URL_PATH_PREFIX = "/burin-labs/burin-code/releases/download/"
+const ARTIFACT_URL_PATH_PREFIX = `/${PUBLIC_RELEASE_REPOSITORY}/releases/download/`
 
 /// Every Homebrew-servable platform archive, all of them required.
 ///
@@ -315,13 +317,15 @@ function write(path, content) {
 }
 
 function parseArgs(argv) {
-  const out = { releaseManifest: "" }
+  const out = { releaseManifest: "", printRepository: false }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     if (arg === "--release-manifest") {
       out.releaseManifest = argv[++i] ?? ""
+    } else if (arg === "--print-release-repository") {
+      out.printRepository = true
     } else if (arg === "--help" || arg === "-h") {
-      process.stdout.write("usage: update-from-release.mjs --release-manifest release.json\n")
+      process.stdout.write("usage: update-from-release.mjs --release-manifest release.json\n       update-from-release.mjs --print-release-repository\n")
       process.exit(0)
     } else {
       throw new Error(`unknown argument: ${arg}`)
@@ -332,6 +336,13 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
+  if (args.printRepository) {
+    if (args.releaseManifest) {
+      throw new Error("--print-release-repository cannot regenerate files")
+    }
+    process.stdout.write(`${PUBLIC_RELEASE_REPOSITORY}\n`)
+    return
+  }
   if (!args.releaseManifest) {
     throw new Error("--release-manifest is required")
   }
