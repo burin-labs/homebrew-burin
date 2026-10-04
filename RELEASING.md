@@ -1,15 +1,17 @@
 # Releasing the tap
 
-On the day `burin-code` goes public, the tap needs **one commit**: regenerate
+When the public release is published, the tap needs **one commit**: regenerate
 the formula and cask from the newest release manifest, and merge.
 
 ```sh
-gh release download <tag> --repo burin-labs/burin-code --pattern release.json
+gh release download <tag> --repo burin-labs/burin-releases --pattern release.json
 node script/update-from-release.mjs --release-manifest release.json
 ```
 
 Commit the changed `Formula/burin.rb`, `Casks/burin-code.rb`, and `README.md`.
-Nothing else in this repository changes.
+Flip `publicInstallEnabled` in the same commit after anonymous downloads pass.
+The source repository remains private. The generator owns the public release
+repository used by its artifact allowlist and CI's release discovery.
 
 ## Before that commit can work
 
@@ -44,7 +46,7 @@ cleanly and then fails for the user.
    all. Regenerate `harn.rb` from the matching Harn release in the same
    commit. As of this writing `harn.rb` pins 0.9.17 while `burin-code` pins
    0.10.102, so this is a real gap, not a formality.
-6. **`burin-code` release assets are publicly readable.** This is what the
+6. **`burin-releases` assets are publicly readable.** This is what the
    whole flip is waiting on.
 
 ## The switch: `public-install.json`
@@ -64,7 +66,7 @@ green:
 
 - a head-only or unreachable `Formula/burin.rb`,
 - a Formula install smoke that skipped rather than installed,
-- a Regen drift check that could not read `burin-code` releases at all.
+- a Regen drift check that could not read the public release manifest.
 
 The reverse direction fails too. If `Formula/burin.rb` gains a reachable stable
 URL while `public-install.json` still says `false`, CI fails with
