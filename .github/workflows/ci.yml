@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   workflow_dispatch:
@@ -16,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -74,7 +76,7 @@ jobs:
 
   cask-checks:
     name: Cask checks
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tap local checkout
@@ -102,9 +104,22 @@ jobs:
             echo "Skipping cask install smoke because ${URL} is not publicly reachable yet."
           fi
 
+  runner-labels:
+    name: Hosted runner labels
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check hosted runner labels
+        # Org gate owned by burin-labs/.github: refuses the floating latest
+        # Ubuntu label, which GitHub moves to a new image without a commit
+        # here. Same pin as harn and burin-code.
+        uses: burin-labs/.github/.github/actions/hosted-runner-labels@47b97f48a4862d684f54a0b8ee7aa370d8bfc126
+        with:
+          harn-version: 0.10.133
+
   regen-drift:
     name: Regen drift check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -118,9 +133,8 @@ jobs:
         run: |
           # NB: GitHub Actions wraps this script with `bash -e {0}`, so an
           # implicit `set -e` is already on. We deliberately use `|| true`
-          # around the cross-repo `gh api` calls -- burin-code may be
-          # private to the default GITHUB_TOKEN (404 -> nonzero exit) and
-          # we want to skip cleanly in that case rather than fail the gate.
+          # around release discovery. While public install is disabled,
+          # a missing publication is an explicit skip, not install evidence.
           set -uo pipefail
           # Whether a skip is allowed at all. Once public-install.json says the
           # public can install `burin`, the committed formula MUST be provably
@@ -136,29 +150,27 @@ jobs:
             echo "$1"
             exit 0
           }
-          RELEASES_JSON="$(gh api repos/burin-labs/burin-code/releases 2>/dev/null || true)"
+          RELEASE_REPOSITORY="$(node script/update-from-release.mjs --print-release-repository)" || exit 1
+          RELEASES_JSON="$(gh api "repos/${RELEASE_REPOSITORY}/releases" 2>/dev/null || true)"
           if [ -z "${RELEASES_JSON}" ]; then
-            skip_or_fail "SKIPPED (could not list burin-code releases at all)"
+            skip_or_fail "SKIPPED (could not list ${RELEASE_REPOSITORY} releases at all)"
           fi
           # `gh api ... || true` above swallows the exit code but leaves an
           # error-shaped JSON object (e.g. `{"message":"Not Found",...}`) in
-          # RELEASES_JSON when the default GITHUB_TOKEN lacks cross-repo
-          # access to a private burin-code. That is NOT the same fact as "there
-          # are no published releases", and reporting it as such is how this job
-          # spent weeks announcing that no release had been published while
-          # burin-code v0.2.0 sat published with a release.json asset attached.
+          # RELEASES_JSON when discovery fails. That is NOT the same fact as
+          # "there are no published releases".
           if [ "$(printf '%s' "${RELEASES_JSON}" | jq -r 'type')" != "array" ]; then
-            skip_or_fail "SKIPPED (no cross-repo read access to burin-labs/burin-code; this is an access fact, not a release fact)"
+            skip_or_fail "SKIPPED (could not read ${RELEASE_REPOSITORY}; this is an access fact, not a release fact)"
           fi
           RELEASE_TAG="$(printf '%s' "${RELEASES_JSON}" | jq -r '[.[] | select(.draft == false and .prerelease == false)] | .[0].tag_name // ""')"
           if [ -z "${RELEASE_TAG}" ]; then
-            skip_or_fail "SKIPPED (burin-code has no published non-prerelease release)"
+            skip_or_fail "SKIPPED (${RELEASE_REPOSITORY} has no published non-prerelease release)"
           fi
-          MANIFEST_URL="$(gh api "repos/burin-labs/burin-code/releases/tags/${RELEASE_TAG}" --jq '.assets[] | select(.name == "release.json") | .url' 2>/dev/null || true)"
+          MANIFEST_URL="$(gh api "repos/${RELEASE_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.assets[] | select(.name == "release.json") | .browser_download_url' 2>/dev/null || true)"
           if [ -z "${MANIFEST_URL}" ]; then
             skip_or_fail "SKIPPED (release ${RELEASE_TAG} has no release.json asset)"
           fi
-          curl -fsSL -H "Accept: application/octet-stream" -H "Authorization: Bearer ${GH_TOKEN}" "${MANIFEST_URL}" -o /tmp/release.json
+          curl -qfsSL "${MANIFEST_URL}" -o /tmp/release.json
           node script/update-from-release.mjs --release-manifest /tmp/release.json
           if ! git diff --exit-code -- Formula/burin.rb Casks README.md; then
             echo "Regenerated Formula/Cask/README differ from committed copy for ${RELEASE_TAG}." >&2
@@ -170,7 +182,7 @@ jobs:
 
   formula-url-preflight:
     name: Formula URL preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       should_install: ${{ steps.classify.outputs.should_install }}
       status: ${{ steps.classify.outputs.status }}
@@ -208,7 +220,7 @@ jobs:
 
   public-install-gate:
     name: Public install gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: formula-url-preflight
     outputs:
       require_install_smoke: ${{ steps.gate.outputs.require_install_smoke }}
@@ -240,7 +252,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Homebrew on Linux
@@ -267,11 +279,12 @@ jobs:
 
   ci-status:
     name: CI status
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       [
         tap-checks,
         cask-checks,
+        runner-labels,
         regen-drift,
         formula-url-preflight,
         public-install-gate,
@@ -283,6 +296,7 @@ jobs:
         env:
           TAP_RESULT: ${{ needs.tap-checks.result }}
           CASK_RESULT: ${{ needs.cask-checks.result }}
+          LABELS_RESULT: ${{ needs.runner-labels.result }}
           REGEN_RESULT: ${{ needs.regen-drift.result }}
           PREFLIGHT_RESULT: ${{ needs.formula-url-preflight.result }}
           GATE_RESULT: ${{ needs.public-install-gate.result }}
@@ -291,6 +305,7 @@ jobs:
         run: |
           test "${TAP_RESULT}" = "success"
           test "${CASK_RESULT}" = "success"
+          test "${LABELS_RESULT}" = "success"
           test "${REGEN_RESULT}" = "success"
           test "${PREFLIGHT_RESULT}" = "success"
           test "${GATE_RESULT}" = "success"
