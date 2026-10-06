@@ -38,14 +38,11 @@ cleanly and then fails for the user.
    package boundary that lets the bundled pipelines compile outside a
    checkout. The formula installs all three; without them in the tarball the
    `install` block fails outright, which is the loud version of the failure.
-5. **`Formula/harn.rb` is at or above the Harn version `burin` was built
-   against.** `burin` delegates its agent subcommands to `harn`, and the
-   formula now depends on it. A `harn` older than the bundle's own pin
-   recompiles every pipeline from source instead of loading the precompiled
-   bytecode that ships with it, and an old enough one cannot compile them at
-   all. Regenerate `harn.rb` from the matching Harn release in the same
-   commit. As of this writing `harn.rb` pins 0.9.17 while `burin-code` pins
-   0.10.102, so this is a real gap, not a formality.
+5. **Each standalone archive carries its exact Harn runtime and package.**
+   The formula installs `burin`, `harn`, pipelines, provider catalog,
+   `providers.toml`, `harn.toml`, `harn.lock`, `.harn`, `LICENSE`, and
+   `THIRD-PARTY-NOTICES.txt` from that one archive. Missing inputs fail install.
+   The separate `harn` formula does not supply Burin's runtime.
 6. **`burin-releases` assets are publicly readable.** This is what the
    whole flip is waiting on.
 
@@ -96,19 +93,13 @@ end-to-end proof that the published artifacts install.
 
 ## What the formula installs, and why it is shaped this way
 
-The formula installs the **standalone per-platform archive**, which carries the
-`burin` binary at the archive root.
+The formula installs the complete **standalone per-platform archive** into
+`libexec`, with only `burin` linked into `bin`. Burin resolves its real executable
+directory and finds the pinned `harn` and resources beside it. An independently
+installed `harn` command remains separate. Pipelines and the provider catalog
+come from the same archive, along with `LICENSE` and `THIRD-PARTY-NOTICES.txt`.
 
-It does not install the npm shim, which is what it used to do. The shim carries
-no binary: it resolves one from a per-platform `optionalDependency`, and its
-postinstall soft-fails when that package is missing. Installing it therefore
-succeeded with exit 0 and failed at first run with `burin runtime binary not
-found`. The shim tarball is still downloaded, as a `resource`, but only for the
-pipelines and provider catalog it carries.
-
-Those land in `share/burin/`, which is where the binary looks for them: it
-probes `<exe_dir>/../share/burin/pipelines`, so `bin` plus `share` is already
-the layout it expects. Alongside them go `harn.toml`, `harn.lock`, and
+Beside the pipelines go `harn.toml`, `harn.lock`, and
 `.harn`: the manifest grants the bundled pipelines the privileged host
 dispatch they are built on, and the other two resolve the packages that
 manifest depends on. Harn finds all three by walking up from the pipeline it
@@ -137,14 +128,14 @@ writable directory the way the macOS app already does.
 
 ## Verifying before a real release exists
 
-The generator's URL allowlist only accepts `burin-code` release assets, so a
+The generator's URL allowlist only accepts `burin-releases` release assets, so a
 local rehearsal renders through `renderFormula` directly with `file://` URLs
-and locally built stand-ins in the same layout: a `.tar.gz` with the `burin`
-binary at its root, plus `npm pack` output from a `burin-code` checkout for
-the bundle resource. Install it from a scratch tap with
+and locally built stand-ins in the same complete archive layout. Such a rehearsal
+proves installation plumbing; final acceptance requires the qualified signed
+release artifacts. Install it from a scratch tap with
 `brew install --build-from-source`, then run `burin headless diagnose` from a
 directory outside any checkout, with a clean `HOME` and a `PATH` carrying only
-`harn` and the system directories.
+the system directories, so diagnosis must reach the packaged Harn runtime.
 
 Read the result, not the exit path: a passing `--version` is not evidence, and
 neither is the absence of a particular error. `exit_code: 0` in the diagnose

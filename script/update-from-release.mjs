@@ -19,22 +19,11 @@ export function updateFromReleaseManifest(path) {
     "macos-arm64-dmg",
     releaseTag,
   )
-  // The formula installs the standalone per-platform archive, not the npm
-  // shim. The shim carries no binary of its own: it resolves one from a
-  // per-platform optionalDependency and its postinstall soft-fails when that
-  // package is absent, so installing it produced an exit-0 install and a
-  // "runtime binary not found" error on first run. The shim tarball is still
-  // fetched, but only for the pipelines and provider catalog the binary reads
-  // from `share/burin`.
+  // Each standalone archive owns the executable pair and its frozen package.
   const binaries = requireBinaryArtifacts(manifest.artifacts, releaseTag)
-  const bundle = requireArtifact(
-    manifest.artifacts?.["cli-npm-tarball"],
-    "cli-npm-tarball",
-    releaseTag,
-  )
 
   write("Casks/burin-code.rb", renderCask({ version, dmg, minimumSystemVersion }))
-  write("Formula/burin.rb", renderFormula({ version: cliVersion, binaries, bundle }))
+  write("Formula/burin.rb", renderFormula({ version: cliVersion, binaries }))
   write("README.md", renderReadme({ appVersion: version, cliVersion }))
 }
 
@@ -73,52 +62,30 @@ export const BINARY_ARTIFACTS = [
   { key: "cli-linux-arm64", os: "linux", cpu: "arm" },
 ]
 
-export function renderFormula({ version, binaries, bundle }) {
+export function renderFormula({ version, binaries }) {
   return `class Burin < Formula
   desc "AI-native terminal coding workbench"
   homepage "https://burincode.com/"
   version "${version}"
   license :cannot_represent
 
-  # \`burin\` delegates its agent subcommands to the \`harn\` runtime, which it
-  # finds on PATH. Without this the binary installs, answers \`--version\`, and
-  # then tells the user to run a script from a repository they do not have.
-  depends_on "burin-labs/burin/harn"
-
 ${renderPlatformBlocks(binaries)}
-  # Pipelines, the provider catalog, and the Harn package boundary, which the
-  # binary reads from \`share/burin\` and which the standalone archive does not
-  # carry. Without them \`burin --version\` still answers and every agent turn
-  # fails.
-  resource "bundle" do
-    url "${bundle.url}"
-    sha256 "${bundle.sha256}"
-  end
-
   def install
-    # No wrapper and no environment variables: \`burin\` probes
-    # \`<exe_dir>/../share/burin/pipelines\` for its pipelines, and its provider
-    # catalog, providers.toml, and Harn package boundary resolve beside them,
-    # so \`bin\` + \`share\` is already the layout it looks for (burin-code#6417).
-    bin.install "burin"
-    resource("bundle").stage do
-      # \`harn.toml\` grants the bundled pipelines the privileged host dispatch
-      # they are built on, and \`harn.lock\` + \`.harn\` resolve the packages that
-      # manifest depends on. Harn finds all three by walking up from the
-      # pipeline it compiles, so they belong beside \`pipelines\`, not inside it
-      # (burin-code#6422).
-      # pkgshare is share/name; brew audit --strict wants the idiom
-      # rather than writing the expanded path by hand (homebrew-burin#21).
-      pkgshare.install "pipelines", "provider-catalog", "providers.toml",
-                       "harn.toml", "harn.lock", ".harn"
-    end
+    # Keep the exact released runtime beside Burin. Only Burin is exposed on
+    # PATH, so an independently installed Harn command retains its own version.
+    libexec.install "burin", "harn", "pipelines", "provider-catalog", "providers.toml",
+                    "harn.toml", "harn.lock", ".harn", "LICENSE", "THIRD-PARTY-NOTICES.txt"
+    bin.install_symlink libexec/"burin"
   end
 
   test do
     require "json"
 
     assert_match version.to_s, shell_output("#{bin}/burin --version")
-    assert_path_exists pkgshare/"pipelines/mode/auto.harn"
+    assert_path_exists libexec/"pipelines/mode/auto.harn"
+    assert_path_exists libexec/"harn"
+    assert_path_exists libexec/"LICENSE"
+    assert_path_exists libexec/"THIRD-PARTY-NOTICES.txt"
     # A bare binary answers --version with no pipelines at all, and a binary
     # that finds its pipelines can still fail to compile them. So run a real
     # subcommand and read its result, rather than grepping for the absence of

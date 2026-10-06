@@ -93,6 +93,7 @@ try {
   assert.equal(readFileSync("Formula/burin.rb", "utf8"), formula)
 
   for (const [key, artifact] of Object.entries(manifest().artifacts)) {
+    if (key === "cli-npm-tarball") continue
     assert.throws(
       () => updateFromReleaseManifest(writeManifest(`private-${key}`, manifest({
         [key]: { ...artifact, url: artifact.url.replace("/burin-releases/", "/burin-code/") },
@@ -118,17 +119,14 @@ try {
     /on_linux do\n {4}on_intel do\n {6}url ".*burin-x86_64-unknown-linux-gnu\.tar\.gz"/,
   )
   assert.match(formula, /burin-aarch64-unknown-linux-gnu\.tar\.gz/)
-  assert.match(formula, /bin\.install "burin"/)
+  assert.match(formula, /bin\.install_symlink libexec\/"burin"/)
 
   // Homebrew has no Windows target, so the published Windows archive must not
   // reach the formula.
   assert.doesNotMatch(formula, /windows|win32/i)
 
-  // The npm shim is a data payload here, not the thing being installed. It
-  // carries no binary: it resolves one from a per-platform optionalDependency
-  // and soft-fails when that is missing, which is an exit-0 install and a
-  // failure on first run. Installing it must not come back.
-  assert.match(formula, /resource "bundle" do\n {4}url ".*burin-cli-1\.2\.4\.tgz"/)
+  // The complete release archive is the one package boundary.
+  assert.doesNotMatch(formula, /resource "bundle"|depends_on "burin-labs\/burin\/harn"/)
   assert.doesNotMatch(formula, /npm/)
   assert.doesNotMatch(formula, /node@22/)
 
@@ -137,9 +135,9 @@ try {
   // asserted rather than assumed.
   assert.match(
     formula,
-    /pkgshare\.install "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn"/,
+    /libexec\.install "burin", "harn", "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn", "LICENSE", "THIRD-PARTY-NOTICES\.txt"/,
   )
-  assert.match(formula, /assert_path_exists pkgshare\/"pipelines\/mode\/auto\.harn"/)
+  assert.match(formula, /assert_path_exists libexec\/"pipelines\/mode\/auto\.harn"/)
   // brew audit --strict flags share/"burin" when pkgshare is the idiom.
   // The on-disk path is unchanged (pkgshare == share/name).
   assert.doesNotMatch(formula, /share\/"burin"/)
@@ -148,7 +146,7 @@ try {
   // outside a checkout, and `harn` is what compiles them. A formula that
   // installs the tree without either produces a binary that finds its
   // pipelines and cannot run one.
-  assert.match(formula, /depends_on "burin-labs\/burin\/harn"/)
+  assert.match(formula, /assert_path_exists libexec\/"harn"/)
 
   // The test block reads a real result. Grepping for the absence of one known
   // error string passed against a product that could not run at all.
@@ -161,7 +159,6 @@ try {
   // is enough and the wrapper is gone. Asserted so it does not creep back as a
   // fix for something it would only mask.
   assert.doesNotMatch(formula, /BURIN_PIPELINE_DIR/)
-  assert.doesNotMatch(formula, /libexec/)
 
   // A bare binary answers --version with no pipelines at all, so the formula's
   // own test has to reach past it.
@@ -216,22 +213,16 @@ try {
     /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-releases\/releases\/download\//,
   )
 
-  assert.throws(
+  assert.doesNotThrow(
     () =>
       updateFromReleaseManifest(
         writeManifest(
-          "release-malicious-cli",
+          "release-without-npm-resource",
           manifest({
-            "cli-npm-tarball": {
-              path: "burin-cli-1.2.4.tgz",
-              sha256: "b".repeat(64),
-              sizeBytes: 20,
-              url: "https://registry.npmjs.org/@evil/burin-cli/-/burin-cli-1.2.4.tgz",
-            },
+            "cli-npm-tarball": null,
           }),
         ),
       ),
-    /must be a GitHub release asset URL under https:\/\/github\.com\/burin-labs\/burin-releases\/releases\/download\//,
   )
 
   // The same allowlist must cover the platform archives, which are the assets
