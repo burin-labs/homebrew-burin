@@ -50,6 +50,8 @@ jobs:
           brew tap burin-labs/burin "$PWD"
       - name: Style
         run: brew style burin-labs/burin/burin
+      - name: Verify generated Harn notices installation
+        run: node script/test-update-harn-from-release.mjs --install-fixture
       - name: Harn formula style
         run: brew style burin-labs/burin/harn
       - name: Formula audit
