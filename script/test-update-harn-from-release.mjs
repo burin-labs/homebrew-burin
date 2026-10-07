@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -35,11 +36,16 @@ try {
   assert.match(formula, /harn-x86_64-unknown-linux-gnu\.tar\.gz/)
   assert.match(formula, /sha256 "dddddddd/)
   assert.match(formula, /bin\.install "harn"/)
+  assert.match(formula, /pkgshare\.install notices/)
   assert.match(formula, /harn --help/)
   // The tap is how a stranger finds this software, so the formula has to say
   // what it is before they depend on it.
   assert.match(formula, /pre-release software and is not yet supported/)
   assert.match(formula, /Expect breaking changes between releases/)
+
+  if (process.argv.includes("--install-fixture")) {
+    testInstalledNotices(join(root, "Formula/harn.rb"))
+  }
 
   const maliciousReleasePath = join(root, "harn-release-malicious.json")
   const malicious = releaseFixture()
@@ -75,6 +81,55 @@ try {
 } finally {
   process.chdir(originalCwd)
   rmSync(root, { recursive: true, force: true })
+}
+
+function testInstalledNotices(formulaPath) {
+  const ruby = `
+    load ARGV.fetch(0)
+    formula = Harn.new("harn", Pathname.new(ARGV.fetch(0)), :stable)
+    source = Pathname.new(ARGV.fetch(1))
+    destination = Pathname.new(ARGV.fetch(2))
+    formula.define_singleton_method(:prefix) { destination }
+    formula.define_singleton_method(:buildpath) { source }
+    Dir.chdir(source) { formula.install }
+    formula.prefix.install_metafiles(source)
+  `
+  const notices = "Exact full dependency license and attribution fixture bytes.\\n"
+  for (const state of ["present", "missing", "empty", "directory", "symlink"]) {
+    const source = join(root, `archive-${state}`)
+    const destination = join(root, `keg-${state}`)
+    mkdirSync(source)
+    mkdirSync(destination)
+    writeFileSync(join(source, "harn"), "runtime fixture bytes")
+    writeFileSync(join(source, "LICENSE-MIT"), "Exact MIT fixture bytes")
+    writeFileSync(join(source, "LICENSE-APACHE"), "Exact Apache fixture bytes")
+    const noticePath = join(source, "THIRD-PARTY-NOTICES.txt")
+    if (state === "present") writeFileSync(noticePath, notices)
+    if (state === "empty") writeFileSync(noticePath, "")
+    if (state === "directory") mkdirSync(noticePath)
+    if (state === "symlink") {
+      const outside = join(root, "outside-notices.txt")
+      writeFileSync(outside, notices)
+      symlinkSync(outside, noticePath)
+    }
+    const result = spawnSync("brew", ["ruby", "-rformula", "-e", ruby, formulaPath, source, destination], {
+      encoding: "utf8",
+      env: { ...process.env, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_ANALYTICS: "1" },
+    })
+    const output = `${result.stdout ?? ""}${result.stderr ?? ""}`
+    assert.ifError(result.error)
+    if (state === "present") {
+      assert.equal(result.status, 0, output)
+      assert.equal(readFileSync(join(destination, "share/harn/THIRD-PARTY-NOTICES.txt"), "utf8"), notices)
+      assert.equal(readFileSync(join(destination, "LICENSE-MIT"), "utf8"), "Exact MIT fixture bytes")
+      assert.equal(readFileSync(join(destination, "LICENSE-APACHE"), "utf8"), "Exact Apache fixture bytes")
+      assert.equal(readFileSync(join(destination, "bin/harn"), "utf8"), "runtime fixture bytes")
+    } else {
+      assert.notEqual(result.status, 0, `${state} notices installed successfully`)
+      assert.match(output, /Harn archive must contain nonempty regular THIRD-PARTY-NOTICES\.txt/)
+    }
+  }
+  console.log("Generated Harn formula: exact installed notice/license bytes; missing, empty, directory and symlink refusals passed")
 }
 
 function releaseFixture() {
