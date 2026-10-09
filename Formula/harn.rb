@@ -27,7 +27,7 @@ class Harn < Formula
 
   def install
     notices = buildpath/"THIRD-PARTY-NOTICES.txt"
-    unless notices.file? && !notices.symlink? && notices.size.positive?
+    if !notices.file? || notices.symlink? || notices.empty?
       odie "Harn archive must contain nonempty regular THIRD-PARTY-NOTICES.txt"
     end
     bin.install "harn"
