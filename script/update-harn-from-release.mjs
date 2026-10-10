@@ -121,7 +121,12 @@ export function renderHarnFormula({ version, tag, assets }) {
   end
 
   def install
+    notices = buildpath/"THIRD-PARTY-NOTICES.txt"
+    if !notices.file? || notices.symlink? || notices.empty?
+      odie "Harn archive must contain nonempty regular THIRD-PARTY-NOTICES.txt"
+    end
     bin.install "harn"
+    pkgshare.install notices
   end
 
   def caveats
