@@ -74,7 +74,8 @@ ${renderPlatformBlocks(binaries)}
     # Keep the exact released runtime beside Burin. Only Burin is exposed on
     # PATH, so an independently installed Harn command retains its own version.
     libexec.install "burin", "harn", "pipelines", "provider-catalog", "providers.toml",
-                    "harn.toml", "harn.lock", ".harn", "LICENSE", "THIRD-PARTY-NOTICES.txt"
+                    "harn.toml", "harn.lock", ".harn", "LICENSE", "THIRD-PARTY-NOTICES.txt",
+                    "harn-licenses"
     bin.install_symlink libexec/"burin"
   end
 
@@ -85,6 +86,9 @@ ${renderPlatformBlocks(binaries)}
     assert_path_exists libexec/"pipelines/mode/auto.harn"
     assert_path_exists libexec/"harn"
     assert_path_exists libexec/"LICENSE"
+    assert_path_exists libexec/"harn-licenses/LICENSE-MIT"
+    assert_path_exists libexec/"harn-licenses/LICENSE-APACHE"
+    assert_path_exists libexec/"harn-licenses/THIRD-PARTY-NOTICES.txt"
     assert_path_exists libexec/"THIRD-PARTY-NOTICES.txt"
     # A bare binary answers --version with no pipelines at all, and a binary
     # that finds its pipelines can still fail to compile them. So run a real
