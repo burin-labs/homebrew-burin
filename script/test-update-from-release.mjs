@@ -135,7 +135,7 @@ try {
   // asserted rather than assumed.
   assert.match(
     formula,
-    /libexec\.install "burin", "harn", "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn", "LICENSE", "THIRD-PARTY-NOTICES\.txt"/,
+    /libexec\.install "burin", "harn", "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn", "LICENSE", "THIRD-PARTY-NOTICES\.txt",\n\s+"harn-licenses"/,
   )
   assert.match(formula, /assert_path_exists libexec\/"pipelines\/mode\/auto\.harn"/)
   // brew audit --strict flags share/"burin" when pkgshare is the idiom.
@@ -147,6 +147,9 @@ try {
   // installs the tree without either produces a binary that finds its
   // pipelines and cannot run one.
   assert.match(formula, /assert_path_exists libexec\/"harn"/)
+  for (const name of ["LICENSE-MIT", "LICENSE-APACHE", "THIRD-PARTY-NOTICES.txt"]) {
+    assert.ok(formula.includes(`assert_path_exists libexec/"harn-licenses/${name}"`))
+  }
 
   // The test block reads a real result. Grepping for the absence of one known
   // error string passed against a product that could not run at all.
