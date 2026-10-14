@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
-import { smokePlatforms, formulaSmokeProof } from "./formula-smoke-proof.mjs"
+import { smokePlatforms, smokeJobsFromPages, formulaSmokeProof } from "./formula-smoke-proof.mjs"
 
 const platforms = smokePlatforms(JSON.parse(readFileSync(
   new URL("../formula-smoke-platforms.json", import.meta.url), "utf8")))
@@ -14,6 +14,10 @@ assert.equal(formulaSmokeProof(platforms, jobs, true).ok, true)
 assert.throws(() => smokePlatforms([]), /nonempty/)
 assert.throws(() => smokePlatforms([platforms[0], platforms[0]]), /unique/)
 assert.throws(() => formulaSmokeProof(platforms, {}, false), /unreadable/)
+assert.throws(() => smokeJobsFromPages([]), /unreadable/)
+assert.throws(() => smokeJobsFromPages([{ total_count: 2, jobs: [] }]), /incomplete/)
+assert.deepEqual(smokeJobsFromPages([{ total_count: 0, jobs: [] }]), [])
+assert.deepEqual(smokeJobsFromPages(jobs.map(job => ({ total_count: jobs.length, jobs: [job] }))), jobs)
 const absent = formulaSmokeProof(platforms, [], false)
 assert.equal(absent.ok, false)
 assert.equal(absent.pending_count, platforms.length)
@@ -77,10 +81,24 @@ try {
   const evidence = join(root, "jobs.json")
   const script = new URL("./formula-smoke-proof.mjs", import.meta.url).pathname
   for (const rows of [jobs, [], harnOnly]) {
-    writeFileSync(evidence, JSON.stringify(rows))
+    writeFileSync(evidence, JSON.stringify([{ total_count: rows.length, jobs: rows }]))
     const result = spawnSync(process.execPath, [script, "--prove", evidence, "true"], { encoding: "utf8" })
     assert.equal(result.status, rows === jobs ? 0 : 1, result.stderr)
     assert.equal(JSON.parse(result.stdout).ok, rows === jobs)
+  }
+  const aggregate = workflow.jobs["ci-status"].steps.find(step => step.name === "Check aggregate result")
+  const aggregateScript = join(root, "aggregate.sh")
+  writeFileSync(aggregateScript, aggregate.run)
+  writeFileSync(join(root, "gh"), '#!/bin/sh\ncase "$*" in *--jq*|*--template*) exit 7;; esac\ncat "$SMOKE_API_RESPONSE"\n', { mode: 0o755 })
+  for (const rows of [jobs, []]) {
+    writeFileSync(evidence, JSON.stringify([{ total_count: rows.length, jobs: rows }]))
+    const result = spawnSync("bash", ["-e", aggregateScript], { encoding: "utf8",
+      env: { ...process.env, PATH: `${root}:${process.env.PATH}`, RUNNER_TEMP: root,
+        SMOKE_API_RESPONSE: evidence, REQUIRE_INSTALL_SMOKE: "true",
+        TAP_RESULT: "success", CASK_RESULT: "success", LABELS_RESULT: "success", REGEN_RESULT: "success",
+        PREFLIGHT_RESULT: "success", GATE_RESULT: "success" } })
+    assert.equal(result.status, rows === jobs ? 0 : 1, result.stderr)
+    assert.equal(JSON.parse(result.stdout).pending_count, rows === jobs ? 0 : platforms.length)
   }
 } finally {
   rmSync(root, { recursive: true, force: true })

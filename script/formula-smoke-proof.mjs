@@ -10,6 +10,19 @@ export function smokePlatforms(value) {
   return value
 }
 
+export function smokeJobsFromPages(pages) {
+  if (!Array.isArray(pages) || pages.length === 0
+      || pages.some(page => !Number.isInteger(page.total_count) || page.total_count < 0
+        || !Array.isArray(page.jobs) || page.total_count !== pages[0].total_count)) {
+    throw new Error("Formula smoke job pages are unreadable")
+  }
+  const jobs = pages.flatMap(page => page.jobs)
+  if (jobs.length !== pages[0].total_count) {
+    throw new Error("Formula smoke job census is incomplete")
+  }
+  return jobs
+}
+
 export function formulaSmokeProof(platforms, jobs, requireBurin) {
   smokePlatforms(platforms)
   if (!Array.isArray(jobs) || typeof requireBurin !== "boolean") {
@@ -57,14 +70,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     )))
     if (process.argv[2] === "--prove" && ["true", "false"].includes(process.argv[4])) {
       const proof = formulaSmokeProof(platforms,
-        JSON.parse(readFileSync(process.argv[3], "utf8")), process.argv[4] === "true")
+        smokeJobsFromPages(JSON.parse(readFileSync(process.argv[3], "utf8"))), process.argv[4] === "true")
       const rendered = JSON.stringify(proof)
       console.log(rendered)
       if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY,
         `Formula install proof: ${rendered}\n`)
       process.exitCode = proof.ok ? 0 : 1
     } else {
-      throw new Error("Use --prove JOBS_JSON REQUIRE_BURIN_BOOLEAN")
+      throw new Error("Use --prove JOB_PAGES_JSON REQUIRE_BURIN_BOOLEAN")
     }
   } catch (error) {
     console.error(`Formula install proof unmeasured: ${error.message}`)

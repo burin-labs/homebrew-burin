@@ -295,8 +295,8 @@ jobs:
           fi
           gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=all&per_page=100" \
-            --jq '[.[].jobs[]]' > "${RUNNER_TEMP}/formula-smoke-jobs.json"
-          node script/formula-smoke-proof.mjs --prove "${RUNNER_TEMP}/formula-smoke-jobs.json" "${REQUIRE_INSTALL_SMOKE}"
+            > "${RUNNER_TEMP}/formula-smoke-pages.json"
+          node script/formula-smoke-proof.mjs --prove "${RUNNER_TEMP}/formula-smoke-pages.json" "${REQUIRE_INSTALL_SMOKE}"
           test "${TAP_RESULT}" = "success"
           test "${CASK_RESULT}" = "success"
           test "${LABELS_RESULT}" = "success"
