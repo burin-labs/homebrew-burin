@@ -209,17 +209,11 @@ assert.match(
 )
 assert.match(
   statusJob,
-  /if \[ "\$\{REQUIRE_INSTALL_SMOKE\}" = "true" \]; then\n\s*test "\$\{INSTALL_RESULT\}" = "success"/,
+  /node script\/formula-smoke-proof\.mjs --prove[^\n]+"\$\{REQUIRE_INSTALL_SMOKE\}"/,
   "when the gate requires install smoke, ci-status must demand a real success",
 )
-// The tolerant `success|skipped` branch must survive only *inside* the guard.
-const skipBranch = statusJob.indexOf("success|skipped")
-const guard = statusJob.indexOf('REQUIRE_INSTALL_SMOKE}" = "true"')
-assert.ok(skipBranch > 0 && guard > 0, "both branches must be present")
-assert.ok(
-  guard < skipBranch,
-  "ci-status must decide whether a skip is acceptable before accepting one",
-)
+assert.doesNotMatch(statusJob, /success\|skipped/,
+  "formula proof must consume executed steps rather than accepting a skipped matrix")
 assert.match(
   statusJob,
   /refusing to guess/,

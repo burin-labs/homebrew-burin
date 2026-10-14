@@ -13,11 +13,14 @@ permissions:
 
 jobs:
   tap-checks:
-    name: Tap checks (${{ matrix.os }})
+    name: Harn formula install smoke (${{ matrix.os }})
+    needs: formula-url-preflight
+    if: always()
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        # Mechanically checked against formula-smoke-platforms.json.
         os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,6 +78,12 @@ jobs:
           set -euo pipefail
           brew install burin-labs/burin/harn
           brew test burin-labs/burin/harn
+      - name: Burin formula install smoke
+        if: needs.formula-url-preflight.outputs.should_install == 'true'
+        run: |
+          set -euo pipefail
+          brew install burin-labs/burin/burin
+          brew test burin-labs/burin/burin
 
   cask-checks:
     name: Cask checks
@@ -196,6 +205,8 @@ jobs:
           node-version: 22
       - name: Test formula URL preflight
         run: node script/test-formula-url-preflight.mjs
+      - name: Test formula smoke proof and workflow contract
+        run: node script/test-formula-smoke-proof.mjs
       - name: Classify committed formula
         id: classify
         run: |
@@ -209,10 +220,10 @@ jobs:
               echo "formula-url-preflight: OK — ${message}" >> "$GITHUB_STEP_SUMMARY"
               ;;
             2)
-              echo "formula-url-preflight: HEAD-ONLY — ${message}; install smoke job will be skipped (not a silent-green success)" >> "$GITHUB_STEP_SUMMARY"
+              echo "formula-url-preflight: HEAD-ONLY: ${message}; Burin install step is unavailable" >> "$GITHUB_STEP_SUMMARY"
               ;;
             3)
-              echo "formula-url-preflight: UNREACHABLE — ${message}; install smoke job will be skipped (not a silent-green success)" >> "$GITHUB_STEP_SUMMARY"
+              echo "formula-url-preflight: UNREACHABLE: ${message}; Burin install step is unavailable" >> "$GITHUB_STEP_SUMMARY"
               ;;
             *)
               echo "::error::formula-url-preflight exited ${code}"
@@ -246,39 +257,6 @@ jobs:
             | tee /tmp/public-install-gate.txt
           echo "public-install-gate: $(cat /tmp/public-install-gate.txt)" >> "$GITHUB_STEP_SUMMARY"
 
-  formula-install-smoke:
-    name: Formula install smoke (${{ matrix.os }})
-    needs: formula-url-preflight
-    if: needs.formula-url-preflight.outputs.should_install == 'true'
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-15]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install Homebrew on Linux
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y build-essential curl file git procps
-          NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
-          echo "/home/linuxbrew/.linuxbrew/sbin" >> "$GITHUB_PATH"
-      - name: Tap local checkout
-        run: |
-          if brew command trust >/dev/null 2>&1; then
-            brew trust --tap "$PWD"
-          fi
-          brew tap burin-labs/burin "$PWD"
-      - name: Install and test formula
-        run: |
-          set -euo pipefail
-          brew install burin-labs/burin/burin
-          brew test burin-labs/burin/burin
-          echo "formula-install-smoke: OK — installed and tested ${{ needs.formula-url-preflight.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
-
   ci-status:
     name: CI status
     runs-on: ubuntu-24.04
@@ -290,10 +268,16 @@ jobs:
         regen-drift,
         formula-url-preflight,
         public-install-gate,
-        formula-install-smoke,
       ]
     if: always()
+    permissions:
+      contents: read
+      actions: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
       - name: Check aggregate result
         env:
           TAP_RESULT: ${{ needs.tap-checks.result }}
@@ -303,27 +287,19 @@ jobs:
           PREFLIGHT_RESULT: ${{ needs.formula-url-preflight.result }}
           GATE_RESULT: ${{ needs.public-install-gate.result }}
           REQUIRE_INSTALL_SMOKE: ${{ needs.public-install-gate.outputs.require_install_smoke }}
-          INSTALL_RESULT: ${{ needs.formula-install-smoke.result }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "${REQUIRE_INSTALL_SMOKE}" != "true" ] && [ "${REQUIRE_INSTALL_SMOKE}" != "false" ]; then
+            echo "public-install-gate did not report require_install_smoke; refusing to guess." >&2
+            exit 1
+          fi
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=all&per_page=100" \
+            --jq '[.[].jobs[]]' > "${RUNNER_TEMP}/formula-smoke-jobs.json"
+          node script/formula-smoke-proof.mjs --prove "${RUNNER_TEMP}/formula-smoke-jobs.json" "${REQUIRE_INSTALL_SMOKE}"
           test "${TAP_RESULT}" = "success"
           test "${CASK_RESULT}" = "success"
           test "${LABELS_RESULT}" = "success"
           test "${REGEN_RESULT}" = "success"
           test "${PREFLIGHT_RESULT}" = "success"
           test "${GATE_RESULT}" = "success"
-          # A skipped install smoke is only acceptable while public-install.json
-          # says the public cannot install `burin` anyway. Once it says they can,
-          # "did not run" stops being an answer: the whole reason #15 survived
-          # this long is that a skip and a pass arrived here looking identical.
-          if [ "${REQUIRE_INSTALL_SMOKE}" != "true" ] && [ "${REQUIRE_INSTALL_SMOKE}" != "false" ]; then
-            echo "public-install-gate did not report require_install_smoke; refusing to guess." >&2
-            exit 1
-          fi
-          if [ "${REQUIRE_INSTALL_SMOKE}" = "true" ]; then
-            test "${INSTALL_RESULT}" = "success"
-          else
-            case "${INSTALL_RESULT}" in
-              success|skipped) ;;
-              *) exit 1 ;;
-            esac
-          fi

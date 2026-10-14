@@ -138,18 +138,9 @@ assert.match(
   ci,
   /if: needs\.formula-url-preflight\.outputs\.should_install == 'true'/,
 )
-assert.match(ci, /success\|skipped/)
 assert.doesNotMatch(
   ci,
   /Skipping formula install smoke because no stable formula URL is publicly reachable yet/,
-)
-const installJob = ci.match(/formula-install-smoke:\n[\s\S]*?(?=\n  [a-z-]+:)/)?.[0]
-assert.ok(installJob, "formula-install-smoke job must exist")
-assert.match(installJob, /brew install burin-labs\/burin\/burin/)
-assert.doesNotMatch(
-  installJob,
-  /echo "Skipping formula install smoke/,
-  "install job must not silent-green skip",
 )
 
 console.log("test-formula-url-preflight: OK")
