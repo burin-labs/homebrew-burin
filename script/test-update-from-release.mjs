@@ -135,8 +135,12 @@ try {
   // asserted rather than assumed.
   assert.match(
     formula,
-    /libexec\.install "burin", "harn", "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn", "LICENSE", "THIRD-PARTY-NOTICES\.txt",\n\s+"harn-licenses"/,
+    /libexec\.install "burin", "harn", "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn", "THIRD-PARTY-NOTICES\.txt",\n\s+"harn-licenses"/,
   )
+  // Homebrew moves a LICENSE out of libexec into the keg root, so the test
+  // asserts it there; asserting libexec failed every real `brew test`.
+  assert.match(formula, /assert_path_exists prefix\/"LICENSE"/)
+  assert.doesNotMatch(formula, /libexec\/"LICENSE"/)
   assert.match(formula, /assert_path_exists libexec\/"pipelines\/mode\/auto\.harn"/)
   // brew audit --strict flags share/"burin" when pkgshare is the idiom.
   // The on-disk path is unchanged (pkgshare == share/name).

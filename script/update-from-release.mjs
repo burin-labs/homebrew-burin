@@ -73,8 +73,9 @@ ${renderPlatformBlocks(binaries)}
   def install
     # Keep the exact released runtime beside Burin. Only Burin is exposed on
     # PATH, so an independently installed Harn command retains its own version.
+    # Homebrew installs the archive's LICENSE into the keg root itself.
     libexec.install "burin", "harn", "pipelines", "provider-catalog", "providers.toml",
-                    "harn.toml", "harn.lock", ".harn", "LICENSE", "THIRD-PARTY-NOTICES.txt",
+                    "harn.toml", "harn.lock", ".harn", "THIRD-PARTY-NOTICES.txt",
                     "harn-licenses"
     bin.install_symlink libexec/"burin"
   end
@@ -85,7 +86,7 @@ ${renderPlatformBlocks(binaries)}
     assert_match version.to_s, shell_output("#{bin}/burin --version")
     assert_path_exists libexec/"pipelines/mode/auto.harn"
     assert_path_exists libexec/"harn"
-    assert_path_exists libexec/"LICENSE"
+    assert_path_exists prefix/"LICENSE"
     assert_path_exists libexec/"harn-licenses/LICENSE-MIT"
     assert_path_exists libexec/"harn-licenses/LICENSE-APACHE"
     assert_path_exists libexec/"harn-licenses/THIRD-PARTY-NOTICES.txt"
