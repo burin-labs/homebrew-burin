@@ -50,6 +50,15 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install the signed publication runtime
+        uses: burin-labs/harn/.github/actions/setup-harn@c9a72eda6b8e015481089c5a5b8ea4511e4ce5d3
+        with:
+          version-file: script/signed-commit/.harn-version
+
+      - name: Install the locked released GitHub adapter
+        working-directory: script/signed-commit
+        run: harn install --locked
+
       - name: Resolve the target Harn release
         id: target
         env:
@@ -78,8 +87,8 @@ jobs:
           gh api "repos/burin-labs/harn/releases/tags/${TAG}" > "${RUNNER_TEMP}/harn-release.json"
 
       # The producer downloads all four macOS/Linux archives, compares their
-      # SHA-256 values to one validated manifest, then uses GitHub's
-      # createCommitOnBranch mutation under an exact observed-head lease. It
+      # SHA-256 values to one validated manifest, then uses the released Harn
+      # worktree adapter under an exact observed-head lease. It
       # refuses moved or armed heads and verifies the returned head is signed
       # by GitHub before opening a non-draft PR.
       - name: Publish signed version-qualified formula update

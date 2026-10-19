@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
 import { spawn } from "node:child_process"
 import { pathToFileURL } from "node:url"
+import { publishFormula } from "./signed-commit/publish.mjs"
 
 import {
   HARN_RELEASE_ASSETS,
@@ -954,22 +955,7 @@ export function liveGitHubAdapter() {
     },
 
     async commitFormula({repository, branch, expectedHead, formula, headline}) {
-      const data = await graphql(
-        "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } ref { name target { oid } } } }",
-        {
-          input: {
-            branch: {repositoryNameWithOwner: repository, branchName: branch},
-            message: {headline},
-            fileChanges: {additions: [{path: FORMULA_PATH, contents: Buffer.from(formula).toString("base64")}]},
-            expectedHeadOid: expectedHead,
-          },
-        },
-      )
-      const result = data.createCommitOnBranch
-      if (!result?.commit?.oid || result.ref?.target?.oid !== result.commit.oid) {
-        throw new Error("createCommitOnBranch returned no exact updated head")
-      }
-      return result.commit.oid
+      return publishFormula({repository, branch, expectedHead, formula, headline})
     },
 
     async createPullRequest({repositoryId, baseBranch, branch, title, body}) {

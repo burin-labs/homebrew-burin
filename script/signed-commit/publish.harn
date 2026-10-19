@@ -1,0 +1,61 @@
+import {
+  GithubClientOptions,
+  GithubConnectorResult,
+  GithubWorktreeCommitReceipt,
+  github_commit_worktree,
+} from "harn-github-connector/worktree"
+
+pub type FormulaPublication = {
+  owner: string,
+  repo: string,
+  branch: string,
+  headline: string,
+  repo_dir: string,
+  base_oid: string,
+}
+
+/** Publish only the index selected by the formula producer, without resetting its lease. */
+pub fn publish_formula(
+  harness: Harness,
+  request: FormulaPublication,
+  options: GithubClientOptions,
+) -> GithubConnectorResult<GithubWorktreeCommitReceipt> {
+  return github_commit_worktree(
+    harness,
+    {
+      owner: request.owner,
+      repo: request.repo,
+      branch: request.branch,
+      headline: request.headline,
+      repo_dir: request.repo_dir,
+      base_oid: request.base_oid,
+      source: "index",
+      create_branch: false,
+      reset_branch: false,
+      options: options,
+    },
+  )
+}
+
+fn main(harness: Harness) {
+  if len(argv) != 1 {
+    throw "signed formula publication requires one metadata file"
+  }
+  const request = schema_expect(
+    json_parse(harness.fs.read_text(argv[0])),
+    schema_of(FormulaPublication),
+  )
+  const token = trim(harness.env.get("GH_TOKEN") ?? "")
+  if token == "" {
+    throw "signed formula publication requires GH_TOKEN"
+  }
+  const result = publish_formula(harness, request, {installation_token: token})
+  if is_err(result) {
+    const failure = unwrap_err(result)
+    harness.stdio.eprintln(
+      "signed formula publication failed [${failure.code}]: ${failure.message}",
+    )
+    harness.runtime.exit(1)
+  }
+  harness.stdio.println(json_stringify(unwrap(result)))
+}
