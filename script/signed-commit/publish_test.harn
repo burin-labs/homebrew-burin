@@ -1,0 +1,206 @@
+import { FormulaPublication, publish_formula } from "./publish"
+
+const BASE = "https://api.github.test"
+
+const BRANCH = "automation/harn-formula-v0.10.171"
+
+const COMMIT = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+fn git(harness: {process: HarnessProcess}, dir: string, args: list<string>) -> string {
+  const result = harness.process.run(
+    {program: "git", args: args, cwd: dir, env: {}, stdin: "", timeout_ms: 10000},
+  )
+  if !result.success {
+    throw "fixture git command failed: " + to_string(result.stderr)
+  }
+  return trim(to_string(result.stdout))
+}
+
+fn fixture(harness: {fs: HarnessFs, process: HarnessProcess}) -> FormulaPublication {
+  const dir = harness.fs.mkdtemp_in_workspace("formula-publication-")
+  git(harness, dir, ["init", "-q", "-b", "main"])
+  git(harness, dir, ["config", "user.name", "Formula fixture"])
+  git(harness, dir, ["config", "user.email", "formula@example.test"])
+  git(harness, dir, ["config", "commit.gpgsign", "false"])
+  git(harness, dir, ["config", "gc.auto", "0"])
+  git(harness, dir, ["config", "maintenance.auto", "false"])
+  harness.fs.mkdir(dir + "/Formula")
+  harness.fs.write_text(dir + "/Formula/harn.rb", "old formula\n")
+  harness.fs.write_text(dir + "/untouched.txt", "old\n")
+  git(harness, dir, ["add", "-A"])
+  git(harness, dir, ["commit", "-qm", "base"])
+  const oid = git(harness, dir, ["rev-parse", "HEAD"])
+  harness.fs.write_text(dir + "/Formula/harn.rb", "selected formula\n")
+  git(harness, dir, ["add", "--", "Formula/harn.rb"])
+  harness.fs.write_text(dir + "/Formula/harn.rb", "unselected later edit\n")
+  harness.fs.write_text(dir + "/untouched.txt", "unselected other file\n")
+  return {
+    owner: "octo-org",
+    repo: "octo-repo",
+    branch: BRANCH,
+    headline: "Update formula",
+    repo_dir: dir,
+    base_oid: oid,
+  }
+}
+
+fn answer(
+  harness: {testing: HarnessTesting},
+  request: FormulaPublication,
+  stale: bool,
+  signed: bool,
+) {
+  harness.testing.http_mock_clear()
+  harness.testing.http_mock(
+    "GET",
+    BASE + "/repos/octo-org/octo-repo/git/ref/heads/" + BRANCH,
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          ref: "refs/heads/" + BRANCH,
+          object: {
+            sha: if stale {
+              COMMIT
+            } else {
+              request.base_oid
+            },
+            type: "commit",
+          },
+        },
+      ),
+    },
+  )
+  harness.testing.http_mock(
+    "POST",
+    BASE + "/graphql",
+    {
+      status: 200,
+      body: json_stringify(
+        {
+          data: {
+            createCommitOnBranch: {
+              commit: {
+                oid: COMMIT,
+                url: "https://github.com/octo-org/octo-repo/commit/" + COMMIT,
+                signature: {
+                  isValid: signed,
+                  wasSignedByGitHub: signed,
+                  state: if signed {
+                    "VALID"
+                  } else {
+                    "UNSIGNED"
+                  },
+                },
+              },
+              ref: {name: BRANCH, target: {oid: COMMIT}},
+            },
+          },
+        },
+      ),
+    },
+  )
+}
+
+fn state(harness: {fs: HarnessFs, process: HarnessProcess}, dir: string) -> string {
+  return git(harness, dir, ["status", "--porcelain=v1"]) + git(harness, dir, ["ls-files", "-s"])
+    + git(harness, dir, ["rev-parse", "HEAD"])
+    + harness.fs.read_text(dir + "/Formula/harn.rb")
+}
+
+fn drop(harness: {fs: HarnessFs, process: HarnessProcess}, dir: string) {
+  if !starts_with(path_basename(dir), "formula-publication-") {
+    throw "only owning fixture cleanup"
+  }
+  const result = harness.process.run(
+    {
+      program: "rm",
+      args: ["-rf", "--", path_basename(dir)],
+      cwd: harness.fs.workspace_temp_dir(),
+      env: {},
+      stdin: "",
+      timeout_ms: 10000,
+    },
+  )
+  if !result.success {
+    throw "fixture cleanup failed"
+  }
+}
+
+pipeline test_selected_index_becomes_signed_payload(harness: Harness, task: any) {
+  const local = pick(harness, ["fs", "process"])
+  const request = fixture(local)
+  const before = state(local, request.repo_dir)
+  answer({testing: harness.testing}, request, false, true)
+  const receipt = unwrap(
+    publish_formula(harness, request, {api_base_url: BASE, installation_token: "fixture-token"}),
+  )
+  assert_eq(receipt.committed, true)
+  assert_eq(receipt.commit_oid, COMMIT)
+  assert_eq(receipt.base_oid, request.base_oid)
+  assert_eq(len(receipt.changes), 1)
+  assert_eq(
+    receipt.changes[0].blob_oid,
+    git(local, request.repo_dir, ["rev-parse", ":Formula/harn.rb"]),
+  )
+  const calls = harness.testing.http_mock_calls()
+  assert_eq(len(calls), 2)
+  const input: {
+    variables: {
+      input: {
+        expectedHeadOid: string,
+        fileChanges: {additions: list<{path: string, contents: string}>},
+      },
+    },
+  } = json_parse(to_string(calls[1].body))
+  assert_eq(input.variables.input.expectedHeadOid, request.base_oid)
+  assert_eq(len(input.variables.input.fileChanges.additions), 1)
+  const addition = input.variables.input.fileChanges.additions[0]
+  if addition == nil {
+    throw "selected formula addition missing"
+  }
+  assert_eq(addition.path, "Formula/harn.rb")
+  assert_eq(addition.contents, base64_encode("selected formula\n"))
+  assert_eq(state(local, request.repo_dir), before)
+  drop(local, request.repo_dir)
+}
+
+pipeline test_stale_head_and_invalid_signature_refuse(harness: Harness, task: any) {
+  const local = pick(harness, ["fs", "process"])
+  const request = fixture(local)
+  const before = state(local, request.repo_dir)
+  answer({testing: harness.testing}, request, true, true)
+  assert(
+    is_err(
+      publish_formula(harness, request, {api_base_url: BASE, installation_token: "fixture-token"}),
+    ),
+  )
+  assert_eq(len(harness.testing.http_mock_calls()), 1, "stale head makes no commit mutation")
+  answer({testing: harness.testing}, request, false, false)
+  assert(
+    is_err(
+      publish_formula(harness, request, {api_base_url: BASE, installation_token: "fixture-token"}),
+    ),
+  )
+  assert_eq(
+    len(harness.testing.http_mock_calls()),
+    2,
+    "invalid signature never advances to PR or auto merge",
+  )
+  assert_eq(state(local, request.repo_dir), before)
+  drop(local, request.repo_dir)
+}
+
+pipeline test_unsupported_selected_mode_refuses_before_network(harness: Harness, task: any) {
+  const local = pick(harness, ["fs", "process"])
+  const request = fixture(local)
+  git(local, request.repo_dir, ["update-index", "--chmod=+x", "Formula/harn.rb"])
+  answer({testing: harness.testing}, request, false, true)
+  assert(
+    is_err(
+      publish_formula(harness, request, {api_base_url: BASE, installation_token: "fixture-token"}),
+    ),
+  )
+  assert_eq(len(harness.testing.http_mock_calls()), 0, "unsupported executable is rejected locally")
+  drop(local, request.repo_dir)
+}

@@ -27,11 +27,22 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
+      - name: Install signed publication runtime
+        uses: burin-labs/harn/.github/actions/setup-harn@c9a72eda6b8e015481089c5a5b8ea4511e4ce5d3
+        with:
+          version-file: script/signed-commit/.harn-version
+      - name: Verify released signed publication adapter
+        working-directory: script/signed-commit
+        run: |
+          harn install --locked
+          harn check publish.harn publish_test.harn
+          harn test publish_test.harn
       - name: Test generator
         run: |
           node script/test-update-from-release.mjs
           node script/test-update-harn-from-release.mjs
           node script/test-publish-harn-formula.mjs
+          node script/signed-commit/publish.test.mjs
           node script/test-formula-url-preflight.mjs
           node script/test-public-install-gate.mjs
       - name: Install Homebrew on Linux
