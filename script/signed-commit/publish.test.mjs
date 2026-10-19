@@ -52,8 +52,21 @@ console.log(JSON.stringify({committed:true,commit_oid:${JSON.stringify(commit)},
   delete process.env.FORMULA_TEST_REFUSE
   assert.equal(git("status", "--porcelain=v1") + git("ls-files", "-s"), before)
   await assert.rejects(publishFormula({...request, expectedHead: "bad"}, {repositoryRoot: checkout, harn: fake}), /invalid signed/)
+  // Reach the actual production child process and released adapter. A dummy
+  // credential must stop at the read-only GitHub branch lookup, before mutation.
+  git("reset", "--hard", expectedHead)
+  const priorToken = process.env.GH_TOKEN
+  try {
+    process.env.GH_TOKEN = "fixture-not-a-live-token"
+    await assert.rejects(publishFormula({...request, expectedHead: git("rev-parse", "HEAD")}, {
+      repositoryRoot: checkout, harn: process.env.FORMULA_TEST_HARN ?? "harn",
+    }), /failed \[auth\].*status 401/)
+  } finally {
+    if (priorToken === undefined) delete process.env.GH_TOKEN
+    else process.env.GH_TOKEN = priorToken
+  }
   assert.deepEqual(readdirSync(root).sort(), ["harn", "observed.json", "source"])
-  console.log("signed formula process boundary: positive, refusal, invalid lease and caller preservation passed")
+  console.log("signed formula process boundary: positive, refusal, invalid lease, caller preservation and real Harn unauthorized lookup refusal passed")
 } finally {
   delete process.env.FORMULA_TEST_REFUSE
   rmSync(root, {recursive: true, force: true})
