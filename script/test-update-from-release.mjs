@@ -135,8 +135,9 @@ try {
   // asserted rather than assumed.
   assert.match(
     formula,
-    /libexec\.install "burin", "harn", "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn", "THIRD-PARTY-NOTICES\.txt",\n\s+"harn-licenses"/,
+    /libexec\.install "burin", "harn", "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn", "THIRD-PARTY-NOTICES\.txt"\n/,
   )
+  assert.doesNotMatch(formula, /harn-licenses/)
   // Homebrew moves a LICENSE out of libexec into the keg root, so the test
   // asserts it there; asserting libexec failed every real `brew test`.
   assert.match(formula, /assert_path_exists prefix\/"LICENSE"/)
@@ -149,11 +150,9 @@ try {
   // The Harn package boundary is what lets the bundled pipelines compile
   // outside a checkout, and `harn` is what compiles them. A formula that
   // installs the tree without either produces a binary that finds its
-  // pipelines and cannot run one.
-  assert.match(formula, /assert_path_exists libexec\/"harn"/)
-  for (const name of ["LICENSE-MIT", "LICENSE-APACHE", "THIRD-PARTY-NOTICES.txt"]) {
-    assert.ok(formula.includes(`assert_path_exists libexec/"harn-licenses/${name}"`))
-  }
+  // pipelines and cannot run one. `harn` is burin under another name, so the
+  // test runs it rather than checking that a file exists.
+  assert.ok(formula.includes(`assert_match(/^harn \\d/, shell_output("#{libexec}/harn --version"))`))
 
   // The test block reads a real result. Grepping for the absence of one known
   // error string passed against a product that could not run at all.
