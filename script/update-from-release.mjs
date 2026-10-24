@@ -71,12 +71,12 @@ export function renderFormula({ version, binaries }) {
 
 ${renderPlatformBlocks(binaries)}
   def install
-    # Keep the exact released runtime beside Burin. Only Burin is exposed on
-    # PATH, so an independently installed Harn command retains its own version.
+    # The archive's harn is a hard link to burin, which answers as Harn under
+    # that name. Only Burin is exposed on PATH, so an independently installed
+    # Harn command retains its own version.
     # Homebrew installs the archive's LICENSE into the keg root itself.
     libexec.install "burin", "harn", "pipelines", "provider-catalog", "providers.toml",
-                    "harn.toml", "harn.lock", ".harn", "THIRD-PARTY-NOTICES.txt",
-                    "harn-licenses"
+                    "harn.toml", "harn.lock", ".harn", "THIRD-PARTY-NOTICES.txt"
     bin.install_symlink libexec/"burin"
   end
 
@@ -85,11 +85,8 @@ ${renderPlatformBlocks(binaries)}
 
     assert_match version.to_s, shell_output("#{bin}/burin --version")
     assert_path_exists libexec/"pipelines/mode/auto.harn"
-    assert_path_exists libexec/"harn"
+    assert_match(/^harn \\d/, shell_output("#{libexec}/harn --version"))
     assert_path_exists prefix/"LICENSE"
-    assert_path_exists libexec/"harn-licenses/LICENSE-MIT"
-    assert_path_exists libexec/"harn-licenses/LICENSE-APACHE"
-    assert_path_exists libexec/"harn-licenses/THIRD-PARTY-NOTICES.txt"
     assert_path_exists libexec/"THIRD-PARTY-NOTICES.txt"
     # A bare binary answers --version with no pipelines at all, and a binary
     # that finds its pipelines can still fail to compile them. So run a real
