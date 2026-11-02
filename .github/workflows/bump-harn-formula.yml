@@ -29,7 +29,7 @@ jobs:
       # credentials cannot supersede the App that owns the server-side commit.
       - name: Mint GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -46,12 +46,12 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
 
       - name: Install the signed publication runtime
-        uses: burin-labs/harn/.github/actions/setup-harn@c9a72eda6b8e015481089c5a5b8ea4511e4ce5d3
+        uses: burin-labs/harn/.github/actions/setup-harn@fb7275fa91979fd332edfcc7fdd5e70ce3026c2d
         with:
           version-file: script/signed-commit/.harn-version
 
@@ -131,7 +131,7 @@ jobs:
 
       - name: Upload typed producer receipt
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: harn-formula-receipt-${{ github.run_id }}
           path: ${{ runner.temp }}/harn-formula-receipt.json
