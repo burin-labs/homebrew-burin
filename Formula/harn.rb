@@ -2,26 +2,26 @@ class Harn < Formula
   desc "Programmable agent runtime and ACP backend"
   homepage "https://harnlang.com/"
   # Homebrew misreads x86_64 target triples as versions unless they are pinned.
-  version "0.10.187"
+  version "0.10.188"
   license "Apache-2.0"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/burin-labs/harn/releases/download/v#{version}/harn-aarch64-apple-darwin.tar.gz"
-      sha256 "9145fdf4364ce97430560b098cc42e9a6e2d098056405bb69f0981d65eae4053"
+      sha256 "53af48785625391a65d544a2ca6cfd410a3d7c30fe6d4db453a8e7a95574ab83"
     else
       url "https://github.com/burin-labs/harn/releases/download/v#{version}/harn-x86_64-apple-darwin.tar.gz"
-      sha256 "41f3486de7dad829e0dc63022d85e32c1e474afc0ce745393483be78cdd7562c"
+      sha256 "7ef1d3885c654d20009fa1e674f4ee8e25bb0b26b5dfd61248825c147366b242"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
       url "https://github.com/burin-labs/harn/releases/download/v#{version}/harn-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "63722fa47cb9cc4772e64dcb9ee1c0f41585c454ef78c0abc604e3d3152c7d8e"
+      sha256 "46dec0e1e720a21df5c72df858022bc8329addf0bee7ad0df213b544cd8590c1"
     else
       url "https://github.com/burin-labs/harn/releases/download/v#{version}/harn-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "18aef16f89bfbcf3b8bdac879d79f35aa0eb21a02e8e0f7404e3a57bfb06b158"
+      sha256 "a68abcaefc702c3c88990f6c04617802dc8eb83292c509a1eb20ac97afd55ae6"
     end
   end
 
