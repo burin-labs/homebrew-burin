@@ -331,6 +331,9 @@ function testInstalledPayload(formulaPath) {
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(path, contents)
   }
+  const stagedHome = join(source, ".brew_home", "state")
+  mkdirSync(dirname(stagedHome))
+  writeFileSync(stagedHome, "Homebrew-owned build state")
   const result = spawnSync("brew", ["ruby", "-rformula", "-e", `
     load ARGV.fetch(0)
     formula = Burin.new("burin", Pathname.new(ARGV.fetch(0)), :stable)
@@ -351,6 +354,8 @@ function testInstalledPayload(formulaPath) {
   }
   assert.equal(realpathSync(join(destination, "bin/burin")), realpathSync(join(destination, "libexec/burin")))
   assert.equal(existsSync(join(destination, "libexec/LICENSE")), false)
+  assert.equal(existsSync(join(destination, "libexec/.brew_home")), false)
+  assert.equal(readFileSync(stagedHome, "utf8"), "Homebrew-owned build state")
   assert.equal(existsSync(join(destination, "bin/harn")), false)
   console.log("Installed complete generated payload, including nonempty runtime capabilities and hidden SDK state")
 }
