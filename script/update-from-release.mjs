@@ -75,8 +75,7 @@ ${renderPlatformBlocks(binaries)}
     # that name. Only Burin is exposed on PATH, so an independently installed
     # Harn command retains its own version.
     # Homebrew installs the archive's LICENSE into the keg root itself.
-    libexec.install "burin", "harn", "pipelines", "provider-catalog", "providers.toml",
-                    "harn.toml", "harn.lock", ".harn", "THIRD-PARTY-NOTICES.txt"
+    libexec.install buildpath.children - [buildpath/"LICENSE"]
     bin.install_symlink libexec/"burin"
   end
 

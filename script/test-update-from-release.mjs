@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { updateFromReleaseManifest } from "./update-from-release.mjs"
@@ -80,6 +80,8 @@ try {
   const formula = readFileSync("Formula/burin.rb", "utf-8")
   const readme = readFileSync("README.md", "utf-8")
 
+  if (process.argv.includes("--install-fixture")) testInstalledPayload(join(root, "Formula/burin.rb"))
+
   assert.match(cask, /version "1\.2\.3"/)
   assert.match(cask, /sha256 "aaaaaaaa/)
   assert.match(cask, /depends_on macos: :sonoma/)
@@ -130,13 +132,6 @@ try {
   assert.doesNotMatch(formula, /npm/)
   assert.doesNotMatch(formula, /node@22/)
 
-  // Pipelines land where `resolve_pipelines_root` probes. Without them the
-  // binary answers `--version` and fails every agent turn, so the layout is
-  // asserted rather than assumed.
-  assert.match(
-    formula,
-    /libexec\.install "burin", "harn", "pipelines", "provider-catalog", "providers\.toml",\n\s+"harn\.toml", "harn\.lock", "\.harn", "THIRD-PARTY-NOTICES\.txt"\n/,
-  )
   assert.doesNotMatch(formula, /harn-licenses/)
   // Homebrew moves a LICENSE out of libexec into the keg root, so the test
   // asserts it there; asserting libexec failed every real `brew test`.
@@ -309,6 +304,55 @@ try {
 } finally {
   process.chdir(originalCwd)
   rmSync(root, { recursive: true, force: true })
+}
+
+function testInstalledPayload(formulaPath) {
+  const source = join(root, "archive")
+  const destination = join(root, "keg")
+  const files = {
+    burin: "Burin executable fixture",
+    harn: "Harn executable fixture",
+    "pipelines/mode/auto.harn": "Bundled pipeline fixture",
+    "provider-catalog/catalog.json": "Provider catalog fixture",
+    "providers.toml": "Provider overlay fixture",
+    "harn.toml": "Frozen project fixture",
+    "harn.lock": "Frozen lock fixture",
+    ".harn/package-current.toml": "Hidden SDK state fixture",
+    "harn-runtime.toml": 'host_capabilities_path = "harn-static-check-capabilities.json"',
+    "harn-static-check-capabilities.json": '{"schemaVersion":1,"capabilities":[]}',
+    "harn-lsp": "Bundled peer executable fixture",
+    "future-runtime-resource.json": "New archive-owned resource fixture",
+    ".future-sdk/state": "New hidden archive-owned resource fixture",
+    "THIRD-PARTY-NOTICES.txt": "Exact dependency notices fixture",
+    LICENSE: "Exact license fixture",
+  }
+  for (const [name, contents] of Object.entries(files)) {
+    const path = join(source, name)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, contents)
+  }
+  const result = spawnSync("brew", ["ruby", "-rformula", "-e", `
+    load ARGV.fetch(0)
+    formula = Burin.new("burin", Pathname.new(ARGV.fetch(0)), :stable)
+    source = Pathname.new(ARGV.fetch(1))
+    destination = Pathname.new(ARGV.fetch(2))
+    formula.define_singleton_method(:prefix) { destination }
+    formula.define_singleton_method(:buildpath) { source }
+    Dir.chdir(source) { formula.install }
+    formula.prefix.install_metafiles(source)
+  `, formulaPath, source, destination], {
+    encoding: "utf8",
+    env: { ...process.env, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_ANALYTICS: "1" },
+  })
+  assert.ifError(result.error)
+  assert.equal(result.status, 0, `${result.stdout ?? ""}${result.stderr ?? ""}`)
+  for (const [name, contents] of Object.entries(files)) {
+    assert.equal(readFileSync(join(destination, name === "LICENSE" ? name : `libexec/${name}`), "utf8"), contents)
+  }
+  assert.equal(realpathSync(join(destination, "bin/burin")), realpathSync(join(destination, "libexec/burin")))
+  assert.equal(existsSync(join(destination, "libexec/LICENSE")), false)
+  assert.equal(existsSync(join(destination, "bin/harn")), false)
+  console.log("Installed complete generated payload, including nonempty runtime capabilities and hidden SDK state")
 }
 
 function renderCaskFromMinimumSystemVersion(minimumSystemVersion) {

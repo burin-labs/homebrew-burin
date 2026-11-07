@@ -36,12 +36,12 @@ cleanly and then fails for the user.
 4. **The release was built after burin-code#6422.** That is where the CLI
    bundle started carrying `harn.toml`, `harn.lock`, and `.harn`, the Harn
    package boundary that lets the bundled pipelines compile outside a
-   checkout. The formula installs all three; without them in the tarball the
-   `install` block fails outright, which is the loud version of the failure.
+   checkout. The formula preserves that package boundary beside the runtime;
+   its real-command test rejects an incomplete installation.
 5. **Each standalone archive carries its exact Harn runtime and package.**
-   The formula installs `burin`, `harn`, pipelines, provider catalog,
-   `providers.toml`, `harn.toml`, `harn.lock`, `.harn`, `LICENSE`, and
-   `THIRD-PARTY-NOTICES.txt` from that one archive. Missing inputs fail install.
+   The formula preserves the complete archive payload, including hidden SDK
+   state and runtime declarations. Homebrew places `LICENSE` in the keg root;
+   the remaining payload stays together in `libexec`.
    The separate `harn` formula does not supply Burin's runtime.
 6. **`burin-releases` assets are publicly readable.** This is what the
    whole flip is waiting on.
